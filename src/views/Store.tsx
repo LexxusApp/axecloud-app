@@ -473,14 +473,14 @@ export default function Store({ userRole, tenantData, userId, isAdminGlobal, set
         />
 
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-2 md:gap-6 lg:grid-cols-3 xl:grid-cols-4">
             {[1, 2, 3, 4].map(i => (
-              <div key={i} className="bg-[#121212] rounded-3xl border border-[#FBBC00]/20 overflow-hidden animate-pulse">
+              <div key={i} className="bg-[#121212] rounded-2xl border border-[#FBBC00]/20 overflow-hidden animate-pulse md:rounded-3xl">
                 <div className="aspect-square bg-white/5" />
-                <div className="p-6 space-y-4">
-                  <div className="h-6 bg-white/10 rounded w-3/4" />
-                  <div className="h-4 bg-white/10 rounded w-1/2" />
-                  <div className="h-10 bg-white/10 rounded-xl w-full mt-4" />
+                <div className="space-y-3 p-3 md:space-y-4 md:p-6">
+                  <div className="h-4 bg-white/10 rounded w-3/4 md:h-6" />
+                  <div className="h-3 bg-white/10 rounded w-1/2 md:h-4" />
+                  <div className="h-9 bg-white/10 rounded-xl w-full md:h-10" />
                 </div>
               </div>
             ))}
@@ -492,26 +492,26 @@ export default function Store({ userRole, tenantData, userId, isAdminGlobal, set
             <p className="text-gray-400 mt-2">A loja do terreiro ainda está vazia.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-2 md:gap-6 lg:grid-cols-3 xl:grid-cols-4">
             {products.map(product => {
               const isLowStock = product.estoque_atual > 0 && product.estoque_atual <= product.estoque_minimo;
               const isOutOfStock = product.estoque_atual === 0;
 
               return (
-                <div key={product.id} className="group relative bg-[#121212] rounded-3xl border border-[#FBBC00]/20 overflow-hidden flex flex-col">
+                <div key={product.id} className="group relative bg-[#121212] rounded-2xl border border-[#FBBC00]/20 overflow-hidden flex flex-col md:rounded-3xl">
                   {isAdmin && (
                     <button
                       type="button"
                       onClick={() => handleDeleteProduct(product)}
                       disabled={deletingProductId === product.id}
-                      className="absolute top-3 right-3 z-20 flex items-center justify-center p-2.5 rounded-xl bg-black/75 border border-red-500/40 text-red-400 hover:bg-red-950/90 hover:text-red-200 transition-colors disabled:opacity-50"
+                      className="absolute top-2 right-2 z-20 flex items-center justify-center rounded-lg border border-red-500/40 bg-black/75 p-2 text-red-400 transition-colors hover:bg-red-950/90 hover:text-red-200 disabled:opacity-50 md:top-3 md:right-3 md:rounded-xl md:p-2.5"
                       title="Excluir produto"
                       aria-label={`Excluir ${product.nome}`}
                     >
                       {deletingProductId === product.id ? (
-                        <div className="w-4 h-4 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
+                        <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-red-400/30 border-t-red-400 md:h-4 md:w-4" />
                       ) : (
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="h-3.5 w-3.5 md:h-4 md:w-4" />
                       )}
                     </button>
                   )}
@@ -528,33 +528,33 @@ export default function Store({ userRole, tenantData, userId, isAdminGlobal, set
                       />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-gray-600">
-                        <ImageIcon className="w-12 h-12 opacity-20" />
+                        <ImageIcon className="h-8 w-8 opacity-20 md:h-12 md:w-12" />
                       </div>
                     )}
                     
                     {/* Badges */}
-                    <div className="absolute top-4 left-4 flex flex-col gap-2">
+                    <div className="absolute top-2 left-2 flex flex-col gap-1.5 md:top-4 md:left-4 md:gap-2">
                       {isOutOfStock ? (
-                        <span className="px-3 py-1 bg-black/80 backdrop-blur-md text-white text-xs font-black uppercase tracking-wider rounded-lg border border-white/10">
+                        <span className="rounded-md border border-white/10 bg-black/80 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-white backdrop-blur-md md:rounded-lg md:px-3 md:py-1 md:text-xs">
                           Indisponível
                         </span>
                       ) : isLowStock ? (
-                        <span className="px-3 py-1 bg-red-900/80 backdrop-blur-md text-red-200 text-xs font-black uppercase tracking-wider rounded-lg border border-red-500/30">
-                          Últimas Unidades
+                        <span className="rounded-md border border-red-500/30 bg-red-900/80 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-red-200 backdrop-blur-md md:rounded-lg md:px-3 md:py-1 md:text-xs">
+                          Últimas
                         </span>
                       ) : null}
                     </div>
                   </div>
 
                   {/* Content */}
-                  <div className="p-6 flex flex-col flex-1">
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className="text-lg font-black text-white leading-tight">{product.nome}</h3>
-                      <span className="text-primary font-black text-lg whitespace-nowrap ml-4">
+                  <div className="flex flex-1 flex-col p-3 md:p-6">
+                    <div className="mb-2 flex flex-col gap-1 md:flex-row md:items-start md:justify-between md:gap-3">
+                      <h3 className="line-clamp-2 text-sm font-black leading-tight text-white md:text-lg">{product.nome}</h3>
+                      <span className="whitespace-nowrap text-sm font-black text-primary md:ml-4 md:text-lg">
                         R$ {product.preco.toFixed(2)}
                       </span>
                     </div>
-                    <p className="text-sm text-gray-400 line-clamp-2 mb-6 flex-1">{product.descricao}</p>
+                    <p className="mb-3 line-clamp-2 flex-1 text-xs text-gray-400 md:mb-6 md:text-sm">{product.descricao}</p>
                     
                     <button 
                       onClick={() => {
@@ -563,14 +563,14 @@ export default function Store({ userRole, tenantData, userId, isAdminGlobal, set
                       }}
                       disabled={isOutOfStock}
                       className={cn(
-                        "w-full py-3 rounded-xl font-black text-sm transition-all flex items-center justify-center gap-2",
+                        "flex w-full items-center justify-center gap-1.5 rounded-xl py-2.5 text-[11px] font-black transition-all md:gap-2 md:py-3 md:text-sm",
                         isOutOfStock 
                           ? "bg-white/5 text-gray-500 cursor-not-allowed" 
                           : "bg-primary text-background hover:scale-[1.02] active:scale-95 shadow-lg shadow-primary/20"
                       )}
                     >
-                      <ShoppingBag className="w-4 h-4" />
-                      {isOutOfStock ? 'Sem Estoque' : userRole === 'filho' ? 'Comprar agora' : 'Adicionar'}
+                      <ShoppingBag className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                      {isOutOfStock ? 'Sem estoque' : userRole === 'filho' ? 'Comprar' : 'Adicionar'}
                     </button>
 
                     {userRole === 'filho' && !isOutOfStock && (
@@ -581,9 +581,9 @@ export default function Store({ userRole, tenantData, userId, isAdminGlobal, set
                           addToCart(product);
                           setIsCartOpen(true);
                         }}
-                        className="w-full mt-2 py-3 bg-white/5 text-white hover:bg-white/10 rounded-xl font-black text-xs uppercase tracking-widest border border-white/10 transition-all"
+                        className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 py-2.5 text-[10px] font-black uppercase tracking-widest text-white transition-all hover:bg-white/10 md:py-3 md:text-xs"
                       >
-                        Reservar item
+                        Reservar
                       </button>
                     )}
                   </div>

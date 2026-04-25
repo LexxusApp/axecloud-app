@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const SYSTEM_VERSION = '1.9.54'; // portal filho: inicializar tenant antes dos modulos dinamicos
+const SYSTEM_VERSION = '1.9.56'; // pwa: manifesto e service worker auto update
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';
