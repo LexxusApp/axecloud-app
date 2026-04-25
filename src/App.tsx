@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const SYSTEM_VERSION = '1.9.44'; // Filho: próximo vencimento — bloco mais sutil e compacto
+const SYSTEM_VERSION = '1.9.45'; // Vercel: corrige env da API tenant-info
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';

@@ -20,6 +20,15 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const viteEnv = (import.meta as any).env || {};
+
+function getServerEnv(...keys: string[]) {
+  for (const key of keys) {
+    const value = process.env[key] || viteEnv[key];
+    if (value) return value;
+  }
+  return undefined;
+}
 
 // Configuração Web Push
 const VAPID_PUBLIC_KEY = process.env.VITE_VAPID_PUBLIC_KEY || "BE8Nz7rSuhDrvaE7glwae51WL2CRGnqisSUN8VkZvi070qEqIkDfxC2ig8eExWwKRPuG6eUeU2BbjF1Cg_NATqA";
@@ -31,8 +40,8 @@ webpush.setVapidDetails(
   VAPID_PRIVATE_KEY
 );
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_URL = getServerEnv("VITE_SUPABASE_URL", "SUPABASE_URL");
+const SUPABASE_SERVICE_ROLE_KEY = getServerEnv("SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
 
 let supabaseAdmin: any;
 
