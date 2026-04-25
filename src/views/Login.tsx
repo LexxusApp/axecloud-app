@@ -17,7 +17,7 @@ export default function Login() {
     if (typeof window === 'undefined') return false;
     return new URLSearchParams(window.location.search).get('updated') === 'true';
   });
-  const alertHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const alertHideTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

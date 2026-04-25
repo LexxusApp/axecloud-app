@@ -16,6 +16,8 @@ import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
 import PixPaymentModal, { PixConfig } from '../components/PixPaymentModal';
 import PageHeader from '../components/PageHeader';
+import { MensalidadeCardSkeleton } from '../components/Skeleton';
+import { readStaleCache, writeStaleCache } from '../lib/staleCache';
 import { format, setDate, addMonths, isBefore } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -26,6 +28,16 @@ interface MensalidadeFilhoProps {
 }
 
 const MENSALIDADE_VALOR_PADRAO = 89.9;
+
+type MensalidadeCachePayload = {
+  filho: any;
+  valorMensalidadeConfig: number;
+  pendingMensalidade: any;
+  diaVencimento: number;
+  pixConfig: PixConfig | null;
+  pixFetched: boolean;
+  mensalidades: any[];
+};
 
 export default function MensalidadeFilho({ user, tenantData, setActiveTab }: MensalidadeFilhoProps) {
   const [filho, setFilho] = useState<any>(null);
@@ -48,14 +60,33 @@ export default function MensalidadeFilho({ user, tenantData, setActiveTab }: Men
       setLoading(true);
       return;
     }
+    const cacheKey = `mensalidade_${userId}_${tenantId}`;
+    const cached = readStaleCache<MensalidadeCachePayload>(cacheKey);
+    if (cached) {
+      setFilho(cached.filho);
+      setValorMensalidadeConfig(cached.valorMensalidadeConfig);
+      setPendingMensalidade(cached.pendingMensalidade);
+      setDiaVencimento(cached.diaVencimento);
+      setPixConfig(cached.pixConfig);
+      setPixFetched(cached.pixFetched);
+      setMensalidades(cached.mensalidades);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     void fetchData();
   }, [userId, tenantId]);
 
   async function fetchData() {
     if (!userId || !tenantId) return;
+    const cacheKey = `mensalidade_${userId}_${tenantId}`;
+
+    let snapValor = MENSALIDADE_VALOR_PADRAO;
+    let snapPending: any = null;
+    let snapDia = 10;
+    let snapPix: PixConfig | null = null;
 
     try {
-      setLoading(true);
       // 1. Buscar Perfil do Filho
       let { data: childData, error: childError } = await supabase
         .from('filhos_de_santo')
@@ -89,22 +120,28 @@ export default function MensalidadeFilho({ user, tenantData, setActiveTab }: Men
         if (pixData) {
           const configuredValue = Number(pixData.valor_mensalidade);
           if (!Number.isNaN(configuredValue) && configuredValue > 0) {
+            snapValor = configuredValue;
             setValorMensalidadeConfig(configuredValue);
-            setPendingMensalidade({
+            snapPending = {
               id: `mensalidade-${childData?.id || userId}`,
               descricao: 'Mensalidade do terreiro',
               valor: configuredValue,
               status: 'pendente',
-            });
+            };
+            setPendingMensalidade(snapPending);
           }
-          if (pixData.dia_vencimento) setDiaVencimento(Number(pixData.dia_vencimento));
+          if (pixData.dia_vencimento) {
+            snapDia = Number(pixData.dia_vencimento);
+            setDiaVencimento(snapDia);
+          }
           if (pixData.chave_pix) {
-            setPixConfig({
+            snapPix = {
               chave_pix: pixData.chave_pix,
               tipo_chave: pixData.tipo_chave,
               nome_beneficiario: pixData.nome_beneficiario,
               cidade: 'BRASIL'
-            });
+            };
+            setPixConfig(snapPix);
           } else {
             setPixConfig(null);
           }
@@ -118,9 +155,17 @@ export default function MensalidadeFilho({ user, tenantData, setActiveTab }: Men
         setPixFetched(true);
       }
 
-      // Histórico de mensalidades: coluna filho_id não existe em financeiro;
-      // deixa lista vazia até integração completa de mensalidades individuais.
       setMensalidades([]);
+
+      writeStaleCache(cacheKey, {
+        filho: childData,
+        valorMensalidadeConfig: snapValor,
+        pendingMensalidade: snapPending,
+        diaVencimento: snapDia,
+        pixConfig: snapPix,
+        pixFetched: true,
+        mensalidades: [] as any[],
+      });
     } catch (error) {
       console.error('Erro ao carregar mensalidade do filho:', error);
     } finally {
@@ -162,10 +207,18 @@ export default function MensalidadeFilho({ user, tenantData, setActiveTab }: Men
     await ensurePixConfig();
   };
 
-  if (loading) {
+  if (loading && filho == null) {
     return (
-      <div className="flex-1 flex items-center justify-center p-20">
-        <Loader2 className="w-12 h-12 text-primary animate-spin" />
+      <div className="flex flex-col min-h-full">
+        <PageHeader
+          title={<>Minhas <span className="text-primary">Mensalidades</span></>}
+          subtitle="Controle suas contribuições com o terreiro."
+          tenantData={tenantData}
+          setActiveTab={setActiveTab}
+        />
+        <div className="flex-1 px-4 md:px-6 lg:px-10 pb-20 max-w-7xl mx-auto w-full space-y-6">
+          <MensalidadeCardSkeleton />
+        </div>
       </div>
     );
   }

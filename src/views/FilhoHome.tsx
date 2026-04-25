@@ -8,12 +8,13 @@ import {
   CheckCircle2, 
   Clock, 
   AlertTriangle,
-  Loader2,
   Info
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '../lib/utils';
 import { supabase } from '../lib/supabase';
+import { readStaleCache, writeStaleCache } from '../lib/staleCache';
+import { FilhoHomeSkeleton } from '../components/Skeleton';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -30,28 +31,45 @@ export default function FilhoHome({ user, tenantData, setActiveTab }: FilhoHomeP
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const tenantId = tenantData?.tenant_id;
+    if (!user?.id) {
+      setLoading(false);
+      return;
+    }
+
+    const cacheKey = `filho_home_${user.id}_${tenantId || 'notenant'}`;
+    const cached = readStaleCache<{
+      child: any;
+      financialStatus: 'pago' | 'pendente' | 'vencido' | 'loading';
+      notices: any[];
+    }>(cacheKey);
+    if (cached) {
+      setChild(cached.child);
+      setFinancialStatus(cached.financialStatus);
+      setNotices(cached.notices);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     const fetchData = async () => {
       try {
-        const tenantId = tenantData?.tenant_id;
         if (!user?.id) return;
 
-        // 1. Fetch Child Profile - Busca robusta por user_id ou e-mail como fallback
         let { data: childData, error: childError } = await supabase
           .from('filhos_de_santo')
-          .select('*')
+          .select('id, nome, foto_url, tenant_id, user_id, email')
           .eq('user_id', user.id)
           .maybeSingle();
         
         if (!childData && user.email) {
-          console.log("[FILHO-HOME] Vínculo por user_id falhou, tentando por e-mail...");
           const { data: emailChild } = await supabase
             .from('filhos_de_santo')
-            .select('*')
+            .select('id, nome, foto_url, tenant_id, user_id, email')
             .eq('email', user.email)
             .maybeSingle();
           childData = emailChild;
           
-          // Se achou por e-mail, atualiza o user_id para futuras sessões
           if (emailChild && !emailChild.user_id) {
              await supabase.from('filhos_de_santo').update({ user_id: user.id }).eq('id', emailChild.id);
           }
@@ -60,30 +78,44 @@ export default function FilhoHome({ user, tenantData, setActiveTab }: FilhoHomeP
         if (childError) throw childError;
         setChild(childData);
 
+        let finStatus: 'pago' | 'pendente' | 'vencido' | 'loading' = 'loading';
+
         if (childData) {
-          // 2. Fetch Financial Status (latest monthly)
           const { data: finData } = await supabase
             .from('financeiro')
-            .select('*')
+            .select('id, status, data_vencimento, filho_id')
             .eq('filho_id', childData.id)
             .order('data_vencimento', { ascending: false })
             .limit(1);
           
           if (finData && finData.length > 0) {
-            setFinancialStatus(finData[0].status as any);
+            finStatus = finData[0].status as any;
+            setFinancialStatus(finStatus);
           } else {
+            finStatus = 'pago';
             setFinancialStatus('pago');
           }
 
-          // 3. Fetch Recent Notices
           const { data: noticesData } = await supabase
             .from('mural_avisos')
-            .select('*')
+            .select('id, titulo, data_publicacao, tenant_id')
             .eq('tenant_id', tenantId || childData.tenant_id)
             .order('data_publicacao', { ascending: false })
             .limit(2);
           
-          setNotices(noticesData || []);
+          const n = noticesData || [];
+          setNotices(n);
+          writeStaleCache(cacheKey, {
+            child: childData,
+            financialStatus: finStatus,
+            notices: n,
+          });
+        } else {
+          writeStaleCache(cacheKey, {
+            child: null,
+            financialStatus: 'pago',
+            notices: [],
+          });
         }
       } catch (err) {
         console.error("Error fetching home data:", err);
@@ -92,13 +124,13 @@ export default function FilhoHome({ user, tenantData, setActiveTab }: FilhoHomeP
       }
     };
 
-    fetchData();
+    void fetchData();
   }, [user?.id, user?.email, tenantData?.tenant_id]);
 
-  if (loading) {
+  if (loading && child == null) {
     return (
-      <div className="flex-1 flex items-center justify-center min-h-screen">
-        <Loader2 className="w-12 h-12 text-primary animate-spin" />
+      <div className="flex-1 p-4 lg:p-10 min-h-screen">
+        <FilhoHomeSkeleton />
       </div>
     );
   }

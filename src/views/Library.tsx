@@ -19,6 +19,8 @@ import { cn } from '../lib/utils';
 import { hasPlanAccess } from '../constants/plans';
 import CommentSection from '../components/CommentSection';
 import PageHeader from '../components/PageHeader';
+import { LibraryCardSkeleton } from '../components/Skeleton';
+import { readStaleCache, writeStaleCache } from '../lib/staleCache';
 
 interface LibraryProps {
   user: any;
@@ -171,14 +173,22 @@ export default function Library({ user, userRole, tenantData, isAdminGlobal, set
       return;
     }
 
-    try {
+    const cacheKey = `library_mats_${effectiveTenantId}`;
+    const cached = readStaleCache<Material[]>(cacheKey);
+    if (cached != null) {
+      setMaterials(cached);
+      setLoading(false);
+    } else {
       setLoading(true);
-      // Usa endpoint do servidor (supabaseAdmin) para bypassar RLS
-      // Isso permite que filhos de santo vejam os materiais do zelador
+    }
+
+    try {
       const res = await fetch(`/api/v1/library/materials?tenantId=${encodeURIComponent(effectiveTenantId)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const { data } = await res.json();
-      setMaterials(data || []);
+      const list = data || [];
+      setMaterials(list);
+      writeStaleCache(cacheKey, list);
     } catch (error) {
       console.error('Error fetching materials:', error);
     } finally {
@@ -189,9 +199,8 @@ export default function Library({ user, userRole, tenantData, isAdminGlobal, set
   useEffect(() => {
     const effectiveTenantId = tenantData?.tenant_id || user.id;
     if (effectiveTenantId) {
-      fetchMaterials();
-      
-      // Mark library notifications as read for admins
+      void fetchMaterials();
+
       if (isAdmin) {
         supabase
           .from('notificacoes')
@@ -488,10 +497,10 @@ export default function Library({ user, userRole, tenantData, isAdminGlobal, set
             </div>
 
             {/* Materials Grid */}
-            {loading ? (
+            {loading && materials.length === 0 ? (
               <div className={cn('grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4', embedded && 'grid-cols-2 gap-2 md:grid-cols-2 lg:grid-cols-2')}>
-                {[1, 2, 3, 4, 5, 6].map(i => (
-                  <div key={i} className={cn('h-40 bg-card rounded-xl animate-pulse border border-white/5', embedded && 'h-32')} />
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <LibraryCardSkeleton key={i} embedded={embedded} />
                 ))}
               </div>
             ) : filteredMaterials.length > 0 ? (

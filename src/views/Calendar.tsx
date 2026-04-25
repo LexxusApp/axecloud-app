@@ -5,8 +5,9 @@ import { ptBR } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../lib/utils';
 import { supabase } from '../lib/supabase';
-import LuxuryLoading from '../components/LuxuryLoading';
 import PageHeader from '../components/PageHeader';
+import { SkeletonBlock, CalendarEventRowSkeleton } from '../components/Skeleton';
+import { readStaleCache, writeStaleCache } from '../lib/staleCache';
 import { hasPlanAccess, hasPremiumTierFeatures } from '../constants/plans';
 
 interface Event {
@@ -22,6 +23,7 @@ interface Event {
 interface Guest {
   id: string;
   nome: string;
+  telefone?: string | null;
   status: 'Confirmado' | 'Pendente' | 'Check-in';
 }
 
@@ -142,7 +144,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
     try {
       const { data, error } = await supabase
         .from('ritual_tasks')
-        .select('*')
+        .select('id, event_id, task_name, is_completed, assigned_to, created_at')
         .eq('event_id', eventId)
         .order('created_at');
       
@@ -217,21 +219,30 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
   async function fetchEvents() {
     if (!effectiveTenantId) return;
 
-    setLoading(true);
     const monthStart = startOfMonth(currentMonth);
     const rangeEnd = addDays(endOfMonth(currentMonth), 7);
+    const monthKey = format(monthStart, 'yyyy-MM');
+    const cacheKey = `cal_events_${effectiveTenantId}_${monthKey}`;
+
+    const cached = readStaleCache<Event[]>(cacheKey);
+    if (cached != null) {
+      setEvents(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
     try {
       const url = `/api/events?tenantId=${encodeURIComponent(effectiveTenantId)}&start=${format(monthStart, 'yyyy-MM-dd')}&end=${format(rangeEnd, 'yyyy-MM-dd')}`;
-      console.log('[DEBUG] Fetching events from:', url);
       const response = await fetch(url);
       if (!response.ok) {
         const body = await response.text().catch(() => '');
         throw new Error(`Failed to fetch events (${response.status}): ${body}`);
       }
       const { data } = await response.json();
-      console.log('[DEBUG] Events fetched:', data);
-      setEvents(data || []);
+      const list = data || [];
+      setEvents(list);
+      writeStaleCache(cacheKey, list);
     } catch (error) {
       console.error('Error fetching events:', error);
       setEvents([]);
@@ -245,7 +256,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
     try {
       const { data, error } = await supabase
         .from('convidados_eventos')
-        .select('*')
+        .select('id, nome, telefone, status')
         .eq('event_id', eventId)
         .order('nome');
       
@@ -455,8 +466,47 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
 
   if (loading && events.length === 0) {
     return (
-      <div className="h-[60vh] flex items-center justify-center">
-        <LuxuryLoading />
+      <div className="flex flex-col min-h-full">
+        <PageHeader
+          title={
+            isFilho ? (
+              <>Giras & <span className="text-primary">Eventos</span></>
+            ) : (
+              <>Calendário de <span className="text-primary">Axé</span></>
+            )
+          }
+          subtitle={isFilho ? 'Calendário de obrigações do terreiro.' : 'Gestão de obrigações e eventos espirituais.'}
+          tenantData={tenantData}
+          setActiveTab={setActiveTab}
+        />
+        <div className="flex-1 px-4 md:px-6 lg:px-10 pb-20 max-w-[1200px] mx-auto w-full">
+          <div className="rounded-2xl border border-white/5 bg-card/30 p-4 md:p-6">
+            <div className="flex items-center justify-between mb-4">
+              <SkeletonBlock className="h-6 w-40" />
+              <div className="flex gap-2">
+                <SkeletonBlock className="h-9 w-9 rounded-lg" />
+                <SkeletonBlock className="h-9 w-9 rounded-lg" />
+              </div>
+            </div>
+            <div className="grid grid-cols-7 gap-1.5 mb-2">
+              {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((d, i) => (
+                <div key={i} className="text-center text-[8px] font-black text-gray-600 py-1">
+                  {d}
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1.5">
+              {Array.from({ length: 35 }).map((_, i) => (
+                <SkeletonBlock key={i} className="aspect-square rounded-xl min-h-[2.25rem]" />
+              ))}
+            </div>
+          </div>
+          <div className="mt-8 space-y-3">
+            <CalendarEventRowSkeleton />
+            <CalendarEventRowSkeleton />
+            <CalendarEventRowSkeleton />
+          </div>
+        </div>
       </div>
     );
   }
@@ -578,8 +628,10 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
               </h3>
 
               {loading ? (
-                <div className="flex justify-center py-10">
-                  <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                <div className="space-y-3 py-4">
+                  <CalendarEventRowSkeleton />
+                  <CalendarEventRowSkeleton />
+                  <CalendarEventRowSkeleton />
                 </div>
               ) : upcomingEvents.length === 0 ? (
                 <div className="card-luxury p-10 text-center text-gray-500 font-medium">

@@ -38,6 +38,27 @@ export default defineConfig(({mode}) => {
         workbox: {
           cleanupOutdatedCaches: true,
           importScripts: ['/sw-push.js'],
+          // Evita que o fallback do SPA (index.html) intercepte navegação para /api/*
+          navigateFallbackDenylist: [/^\/api\//],
+          runtimeCaching: [
+            {
+              // GET same-origin: biblioteca, tenant-info, eventos, etc. — resposta imediata do cache + atualização em silêncio
+              urlPattern: ({url, sameOrigin}) => sameOrigin && url.pathname.startsWith('/api/'),
+              handler: 'StaleWhileRevalidate',
+              method: 'GET',
+              options: {
+                cacheName: 'axecloud-api-swr',
+                expiration: {
+                  maxEntries: 80,
+                  maxAgeSeconds: 60 * 60 * 24 * 7,
+                  purgeOnQuotaError: true,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+          ],
         },
       }),
     ],
