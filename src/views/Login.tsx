@@ -1,8 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Lock, Mail, ArrowRight, Loader2, UserCircle2, KeyRound, AlertCircle } from 'lucide-react';
+import { Lock, Mail, ArrowRight, Loader2, UserCircle2, KeyRound, AlertCircle, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
+
+function stripUpdatedQueryFromUrl() {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('updated') !== 'true') return;
+  url.searchParams.delete('updated');
+  const next = url.pathname + url.search + url.hash;
+  window.history.replaceState(null, '', next);
+}
 
 export default function Login() {
   const [loginType, setLoginType] = useState<'zelador' | 'filho'>('zelador');
@@ -12,7 +20,26 @@ export default function Login() {
   const [cpfPrefix, setCpfPrefix] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const wasUpdated = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('updated') === 'true';
+  const [showUpdatedBanner, setShowUpdatedBanner] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('updated') === 'true';
+  });
+
+  const dismissUpdatedBanner = useCallback(() => {
+    setShowUpdatedBanner(false);
+    stripUpdatedQueryFromUrl();
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('updated') !== 'true') return;
+
+    const id = window.setTimeout(() => {
+      dismissUpdatedBanner();
+    }, 5000);
+
+    return () => window.clearTimeout(id);
+  }, [dismissUpdatedBanner]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,14 +107,31 @@ export default function Login() {
         animate={{ opacity: 1, y: 0 }}
         className="z-10 w-full max-w-[380px] space-y-6"
       >
-        {wasUpdated && (
-          <div className="flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/15 px-4 py-3 text-primary shadow-[0_0_30px_rgba(251,188,0,0.12)]">
-            <AlertCircle className="h-5 w-5 shrink-0" />
-            <p className="text-sm font-black leading-snug">
-              Sistema Atualizado. Faça o Login Novamente.
-            </p>
-          </div>
-        )}
+        <AnimatePresence>
+          {showUpdatedBanner && (
+            <motion.div
+              key="updated-banner"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2 }}
+              className="flex items-start gap-3 rounded-xl border border-primary/40 bg-primary/15 px-4 py-3 text-primary shadow-[0_0_30px_rgba(251,188,0,0.12)]"
+            >
+              <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+              <p className="text-sm font-black leading-snug flex-1 pr-1">
+                Sistema Atualizado. Faça o Login Novamente.
+              </p>
+              <button
+                type="button"
+                onClick={dismissUpdatedBanner}
+                aria-label="Fechar aviso de atualização"
+                className="shrink-0 rounded-md p-1 text-primary/80 hover:bg-primary/20 hover:text-primary transition-colors -mr-1 -mt-0.5"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Logo & Title */}
         <div className="text-center space-y-4">
