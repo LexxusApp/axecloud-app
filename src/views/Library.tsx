@@ -51,12 +51,31 @@ function PdfCover({ url, compact }: { url: string; compact?: boolean }) {
 
     async function render() {
       try {
+        setStatus('loading');
         const pdfjsLib = await import('pdfjs-dist');
         pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
-        // Usa proxy local para evitar CORS no Supabase Storage
-        const proxyUrl = `/api/v1/library/pdf-proxy?url=${encodeURIComponent(url)}`;
-        const pdf = await pdfjsLib.getDocument(proxyUrl).promise;
+        // Tenta primeiro pelo proxy local (Vercel/Express), e cai para URL direta se necessário.
+        const sources = [
+          `/api/v1/library/pdf-proxy?url=${encodeURIComponent(url)}`,
+          url,
+        ];
+        let pdf: any = null;
+        let lastError: unknown = null;
+        for (const source of sources) {
+          try {
+            pdf = await pdfjsLib.getDocument({
+              url: source,
+              withCredentials: false,
+              disableRange: true,
+              disableStream: true,
+            }).promise;
+            break;
+          } catch (err) {
+            lastError = err;
+          }
+        }
+        if (!pdf) throw lastError || new Error('Falha ao carregar PDF');
         if (cancelled) return;
 
         const page = await pdf.getPage(1);

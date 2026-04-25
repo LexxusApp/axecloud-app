@@ -860,6 +860,33 @@ async function startServer() {
     }
   });
 
+  // API Route: PDF Proxy — serve o PDF localmente para evitar CORS no PDF.js (Vercel)
+  app.get("/api/v1/library/pdf-proxy", async (req, res) => {
+    const { url } = req.query;
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: "url query param required" });
+    }
+
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        return res.status(response.status).send("Erro ao buscar PDF");
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      res.set({
+        'Content-Type': response.headers.get('content-type') || 'application/pdf',
+        'Content-Length': String(buffer.length),
+        'Cache-Control': 'public, max-age=3600',
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.send(buffer);
+    } catch (err: any) {
+      console.error("[PDF-PROXY] Erro:", err.message || err);
+      res.status(500).send("Erro interno");
+    }
+  });
+
   // API Route: Create Tenant (Admin only)
   app.post("/api/admin/create-tenant", async (req, res) => {
     const { email, password, nome_terreiro, nome_zelador, whatsapp, plan, observacao } = req.body;

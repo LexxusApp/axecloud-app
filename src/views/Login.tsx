@@ -5,7 +5,6 @@ import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
 
 export default function Login() {
-  const [logoError, setLogoError] = useState(false);
   const [loginType, setLoginType] = useState<'zelador' | 'filho'>('zelador');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -97,34 +96,24 @@ export default function Login() {
             animate={{ opacity: 1, y: 0 }}
             className="flex justify-center"
           >
-            {!logoError ? (
-              <img 
-                src="/logo.png" 
-                alt="AxéCloud Logo" 
-                className="w-full max-w-[200px] h-auto drop-shadow-[0_0_30px_rgba(251,188,0,0.2)]"
-                referrerPolicy="no-referrer"
-                onError={() => setLogoError(true)}
-              />
-            ) : (
-              <div className="flex flex-col items-center">
-                <div className="flex items-baseline gap-3">
-                  <h1 className="text-6xl font-black tracking-tighter flex items-baseline">
-                    <span className="text-white">AX</span>
-                    <span className="text-primary ml-1">É</span>
-                  </h1>
-                </div>
-                <h2 className="text-3xl font-black text-white/60 tracking-[0.3em] -mt-2 ml-2">
-                  CLOUD
-                </h2>
-                <div className="flex items-center gap-4 mt-6 w-full max-w-[300px]">
-                  <div className="h-[1px] w-10 bg-white/20" />
-                  <p className="text-white/40 font-bold tracking-[0.5em] uppercase text-[9px] whitespace-nowrap">
-                    GESTÃO SAGRADA
-                  </p>
-                  <div className="h-[1px] w-10 bg-white/20" />
-                </div>
+            <div className="flex flex-col items-center">
+              <div className="flex items-baseline gap-3">
+                <h1 className="text-6xl font-black tracking-tighter flex items-baseline">
+                  <span className="text-white">AX</span>
+                  <span className="text-primary ml-1">É</span>
+                </h1>
               </div>
-            )}
+              <h2 className="text-3xl font-black text-white/60 tracking-[0.3em] -mt-2 ml-2">
+                CLOUD
+              </h2>
+              <div className="flex items-center gap-4 mt-6 w-full max-w-[300px]">
+                <div className="h-[1px] w-10 bg-white/20" />
+                <p className="text-white/40 font-bold tracking-[0.5em] uppercase text-[9px] whitespace-nowrap">
+                  GESTÃO SAGRADA
+                </p>
+                <div className="h-[1px] w-10 bg-white/20" />
+              </div>
+            </div>
           </motion.div>
         </div>
 

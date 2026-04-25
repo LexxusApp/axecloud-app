@@ -7,7 +7,6 @@ import { fileURLToPath } from "url";
 import cors from "cors";
 import geoip from "geoip-lite";
 import webpush from "web-push";
-import { usesDistantSubscriptionExpiry } from "./src/constants/plans";
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);
@@ -38,6 +37,32 @@ webpush.setVapidDetails(
 let supabaseAdmin: any;
 let pixSupportsValorMensalidade = true;
 let pixSupportsDiaVencimento = true;
+
+function canonicalPlanSlug(plan: string | undefined): string {
+  if (!plan) return 'axe';
+  const stripped = plan.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const p = stripped.toLowerCase().trim().replace(/\s+/g, ' ');
+  const compact = p.replace(/[\s_-]/g, '');
+
+  if (p === 'vita' || p === 'plano vita' || compact === 'planovita') return 'vita';
+  if (p === 'premium' || compact === 'premium') return 'premium';
+  if (p === 'oro' || compact === 'oro' || compact === 'planoor') return 'oro';
+  if (p === 'cortesia' || compact === 'cortesia') return 'cortesia';
+  if (p === 'axe' || p === 'free' || compact === 'axe' || compact === 'free') return p === 'free' ? 'free' : 'axe';
+  return p;
+}
+
+function isLifetimePlan(plan: string | undefined): boolean {
+  const c = canonicalPlanSlug(plan);
+  return c === 'cortesia' || c === 'vita';
+}
+
+function usesDistantSubscriptionExpiry(plan: string | undefined): boolean {
+  if (!plan) return false;
+  const raw = plan.toLowerCase().trim();
+  if (raw === 'premium') return true;
+  return isLifetimePlan(plan);
+}
 
 function isMissingColumnError(error: any, columnName: string) {
   const message = error?.message || '';
