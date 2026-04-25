@@ -1193,22 +1193,51 @@ async function startServer() {
 
       // 2. Se não encontrou perfil de líder, pode ser um filho vinculado
       if (!profileRes.data) {
-        const { data: childData, error: childError } = await supabaseAdmin
+        let { data: childData, error: childError } = await supabaseAdmin
           .from('filhos_de_santo')
           .select('lider_id, tenant_id')
           .eq('user_id', userId)
           .maybeSingle();
         if (childError) throw childError;
-        
+        if (!childData && email) {
+          const r2 = await supabaseAdmin
+            .from('filhos_de_santo')
+            .select('lider_id, tenant_id')
+            .eq('email', email)
+            .maybeSingle();
+          childData = r2.data;
+          if (r2.error) throw r2.error;
+        }
+
         if (childData) {
-          const leaderId = childData.tenant_id || childData.lider_id;
-          const [leaderProfile, leaderSub] = await Promise.all([
-            supabaseAdmin.from('perfil_lider').select('nome_terreiro, cargo, role, tenant_id, is_admin_global, is_blocked, deleted_at, foto_url').eq('id', leaderId).maybeSingle(),
-            supabaseAdmin.from('subscriptions').select('plan, status, expires_at').eq('id', leaderId).maybeSingle()
-          ]);
+          // lider_id = perfil_lider.id do zelador; tenant_id costuma ser o UUID "lógico" da linha perfil_lider.tenant_id.
+          // Priorizar lider_id: usar tenant_id primeiro quebrava .eq('id', leaderId) no perfil_lider.
+          const candidateLeaderId = childData.lider_id || childData.tenant_id;
+          let leaderProfile = await supabaseAdmin
+            .from('perfil_lider')
+            .select('nome_terreiro, cargo, role, tenant_id, is_admin_global, is_blocked, deleted_at, foto_url')
+            .eq('id', candidateLeaderId)
+            .maybeSingle();
           if (leaderProfile.error) throw leaderProfile.error;
+
+          if (!leaderProfile.data && childData.tenant_id) {
+            const alt = await supabaseAdmin
+              .from('perfil_lider')
+              .select('nome_terreiro, cargo, role, tenant_id, is_admin_global, is_blocked, deleted_at, foto_url')
+              .eq('tenant_id', childData.tenant_id)
+              .maybeSingle();
+            if (alt.error) throw alt.error;
+            if (alt.data) leaderProfile = alt;
+          }
+
+          const zeladorAuthId = leaderProfile.data?.id || candidateLeaderId;
+          const leaderSub = await supabaseAdmin
+            .from('subscriptions')
+            .select('plan, status, expires_at')
+            .eq('id', zeladorAuthId)
+            .maybeSingle();
           if (leaderSub.error) throw leaderSub.error;
-          
+
           if (leaderProfile.data?.deleted_at) {
             return res.status(403).json({ error: "Conta excluída", status: "deleted" });
           }

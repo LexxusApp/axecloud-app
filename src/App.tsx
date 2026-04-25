@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const SYSTEM_VERSION = '1.9.52'; // RBAC: portal exclusivo para filho
+const SYSTEM_VERSION = '1.9.53'; // tenant-info filho: priorizar lider_id ao resolver zelador
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';

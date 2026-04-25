@@ -1211,7 +1211,8 @@ async function startServer() {
 
       if (childData) {
         console.log(`[SERVER] Usuário identificado como FILHO: ${childData.nome}`);
-        const leaderId = childData.tenant_id || childData.lider_id;
+        // lider_id aponta para perfil_lider.id; tenant_id costuma ser o UUID lógico — não usar como .eq('id', …) primeiro.
+        const leaderId = childData.lider_id || childData.tenant_id;
         
         let leaderProfileData: any = null;
         let leaderSubData: any = null;

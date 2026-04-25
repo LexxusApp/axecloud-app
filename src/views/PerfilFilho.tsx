@@ -205,12 +205,19 @@ export default function PerfilFilho({ user, tenantData, setActiveTab }: PerfilFi
     let cancelled = false;
     (async () => {
       try {
-        let q = supabase
+        let { data, error } = await supabase
           .from('filhos_de_santo')
           .select('id, nome, foto_url, cargo, orixa_frente, created_at, data_entrada')
-          .eq('user_id', user.id);
-        if (tenantId) q = q.eq('tenant_id', tenantId);
-        const { data, error } = await q.maybeSingle();
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (!data && user.email) {
+          const { data: byEmail, error: emailErr } = await supabase
+            .from('filhos_de_santo')
+            .select('id, nome, foto_url, cargo, orixa_frente, created_at, data_entrada')
+            .eq('email', user.email)
+            .maybeSingle();
+          if (!emailErr && byEmail) data = byEmail;
+        }
         if (!cancelled && !error && data) setFilho(data as FilhoData);
       } finally {
         if (!cancelled) setLoadingFilho(false);
@@ -219,7 +226,7 @@ export default function PerfilFilho({ user, tenantData, setActiveTab }: PerfilFi
     return () => {
       cancelled = true;
     };
-  }, [user.id, tenantId]);
+  }, [user.id, user.email]);
 
   // 2. Status da mensalidade — tabela financeiro não tem coluna filho_id/status;
   //    débito é considerado em dia por padrão até integração de mensalidades.
