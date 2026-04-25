@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const SYSTEM_VERSION = '1.9.53'; // tenant-info filho: priorizar lider_id ao resolver zelador
+const SYSTEM_VERSION = '1.9.54'; // portal filho: inicializar tenant antes dos modulos dinamicos
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';
@@ -111,17 +111,72 @@ export default function App() {
         setUserRole(role);
         
         // 2. Tenant Info
-        const nome = data.nome_terreiro || 'Meu Terreiro';
         const plan = (data.plan || 'axe').toLowerCase().trim();
         const isGlobalAdmin = !!data.is_admin_global;
+        let nome = data.nome_terreiro || 'Meu Terreiro';
+        let tenantId = data.tenant_id || userId;
+        let tenantFotoUrl = data.foto_url;
+
+          // Filhos podem acessar direto sem passar pelo Dashboard do zelador.
+          // Por isso resolvemos o terreiro pelo vínculo do filho antes de montar as abas.
+          if (role === 'filho') {
+            let { data: childData, error: childError } = await supabase
+              .from('filhos_de_santo')
+              .select('id, foto_url, lider_id, tenant_id')
+              .eq('user_id', userId)
+              .maybeSingle();
+
+            if (!childData && userEmail) {
+              const byEmail = await supabase
+                .from('filhos_de_santo')
+                .select('id, foto_url, lider_id, tenant_id')
+                .eq('email', userEmail)
+                .maybeSingle();
+              childData = byEmail.data;
+              childError = byEmail.error;
+            }
+            
+            if (childError) {
+              console.error("Erro ao buscar vínculo de filho:", childError);
+            } else if (childData) {
+              setSelectedChildId(childData.id);
+              setFilhoFotoUrl(childData.foto_url || null);
+
+              const profileFilters = [
+                childData.lider_id ? `id.eq.${childData.lider_id}` : null,
+                childData.tenant_id ? `tenant_id.eq.${childData.tenant_id}` : null,
+                childData.tenant_id ? `id.eq.${childData.tenant_id}` : null,
+              ].filter(Boolean).join(',');
+
+              if (profileFilters) {
+                const { data: leaderProfile, error: leaderError } = await supabase
+                  .from('perfil_lider')
+                  .select('id, nome_terreiro, tenant_id, foto_url')
+                  .or(profileFilters)
+                  .maybeSingle();
+
+                if (leaderError) {
+                  console.error("Erro ao buscar terreiro do filho:", leaderError);
+                } else if (leaderProfile) {
+                  nome = leaderProfile.nome_terreiro || nome;
+                  tenantId = leaderProfile.tenant_id || leaderProfile.id || childData.lider_id || childData.tenant_id || tenantId;
+                  tenantFotoUrl = leaderProfile.foto_url || tenantFotoUrl;
+                } else {
+                  tenantId = childData.lider_id || childData.tenant_id || tenantId;
+                }
+              } else {
+                tenantId = childData.lider_id || childData.tenant_id || tenantId;
+              }
+            }
+          }
         
         setTenantData({ 
           nome, 
           plan, 
-          tenant_id: data.tenant_id || userId,
+          tenant_id: tenantId,
           expires_at: data.expires_at,
           status: data.status,
-          foto_url: data.foto_url,
+          foto_url: tenantFotoUrl,
           cargo: data.cargo ?? undefined,
           role: role
         });
@@ -140,22 +195,6 @@ export default function App() {
           if (role === 'filho') {
             setIsMasterActive(false);
             setActiveTab(prev => normalizeFilhoTab(prev));
-          }
-
-          // 5. Se for filho, buscar o ID e foto_url dele na tabela filhos_de_santo
-          if (role === 'filho') {
-            const { data: childData, error: childError } = await supabase
-              .from('filhos_de_santo')
-              .select('id, foto_url')
-              .eq('user_id', userId)
-              .maybeSingle();
-            
-            if (childError) {
-              console.error("Erro ao buscar vínculo de filho:", childError);
-            } else if (childData) {
-              setSelectedChildId(childData.id);
-              setFilhoFotoUrl(childData.foto_url || null);
-            }
           }
 
           // 3. Subscription (Filhos de Santo não precisam de assinatura ativa)
@@ -413,6 +452,21 @@ export default function App() {
   }
 
   if (loading || !userRole) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center relative overflow-hidden">
+        <div 
+          className="fixed inset-0 bg-cover bg-center bg-no-repeat pointer-events-none"
+          style={{ 
+            backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.6)), url('/login-bg.png')`,
+            backgroundAttachment: 'fixed'
+          }}
+        />
+        <Loader2 className="w-12 h-12 text-primary animate-spin relative z-10" />
+      </div>
+    );
+  }
+
+  if (userRole === 'filho' && !tenantData?.tenant_id) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center relative overflow-hidden">
         <div 

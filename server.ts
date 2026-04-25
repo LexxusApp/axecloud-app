@@ -1909,10 +1909,13 @@ async function startServer() {
       return res.status(400).json({ error: "tenantId é obrigatório" });
     }
     try {
+      const resolvedId = await resolveLeaderId(tenantId);
+      const ids = Array.from(new Set([tenantId, resolvedId].filter(Boolean)));
+      const tenantFilters = ids.flatMap((id) => [`tenant_id.eq.${id}`, `lider_id.eq.${id}`]).join(',');
       let query = supabaseAdmin
         .from('calendario_axe')
         .select('*')
-        .or(`tenant_id.eq.${tenantId},lider_id.eq.${tenantId}`)
+        .or(tenantFilters)
         .order('data', { ascending: true });
       if (start) query = query.gte('data', start as string);
       if (end) query = query.lte('data', end as string);

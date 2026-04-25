@@ -1150,6 +1150,78 @@ async function startServer() {
     }
 
     try {
+      // Prioridade: filho de santo vinculado. Em acesso direto, pode existir
+      // perfil residual para o auth user do filho; esse perfil não deve definir o tenant.
+      let { data: linkedChild, error: linkedChildError } = await supabaseAdmin
+        .from('filhos_de_santo')
+        .select('id, nome, lider_id, tenant_id')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (linkedChildError) throw linkedChildError;
+
+      if (!linkedChild && email) {
+        const byEmail = await supabaseAdmin
+          .from('filhos_de_santo')
+          .select('id, nome, lider_id, tenant_id')
+          .eq('email', email)
+          .maybeSingle();
+        if (byEmail.error) throw byEmail.error;
+        linkedChild = byEmail.data;
+      }
+
+      if (linkedChild) {
+        const leaderRef = linkedChild.lider_id || linkedChild.tenant_id;
+        let leaderProfile: any = { data: null };
+
+        if (leaderRef) {
+          leaderProfile = await supabaseAdmin
+            .from('perfil_lider')
+            .select('id, nome_terreiro, cargo, role, tenant_id, is_admin_global, is_blocked, deleted_at, foto_url')
+            .eq('id', leaderRef)
+            .maybeSingle();
+          if (leaderProfile.error) throw leaderProfile.error;
+        }
+
+        if (!leaderProfile.data && linkedChild.tenant_id) {
+          const alt = await supabaseAdmin
+            .from('perfil_lider')
+            .select('id, nome_terreiro, cargo, role, tenant_id, is_admin_global, is_blocked, deleted_at, foto_url')
+            .eq('tenant_id', linkedChild.tenant_id)
+            .maybeSingle();
+          if (alt.error) throw alt.error;
+          if (alt.data) leaderProfile = alt;
+        }
+
+        if (leaderProfile.data?.deleted_at) {
+          return res.status(403).json({ error: "Conta excluída", status: "deleted" });
+        }
+        if (leaderProfile.data?.is_blocked) {
+          return res.status(403).json({ error: "Acesso suspenso", status: "blocked" });
+        }
+
+        const leaderAuthId = leaderProfile.data?.id || leaderRef;
+        const leaderSub = leaderAuthId
+          ? await supabaseAdmin
+              .from('subscriptions')
+              .select('plan, status, expires_at')
+              .eq('id', leaderAuthId)
+              .maybeSingle()
+          : { data: null, error: null };
+        if (leaderSub.error) throw leaderSub.error;
+
+        return res.json({
+          nome_terreiro: leaderProfile.data?.nome_terreiro || 'Meu Terreiro',
+          cargo: null,
+          role: 'filho',
+          is_admin_global: false,
+          tenant_id: leaderProfile.data?.tenant_id || linkedChild.tenant_id || leaderProfile.data?.id || leaderRef || userId,
+          plan: (leaderSub.data?.plan || 'axe').toLowerCase().trim(),
+          status: 'active',
+          expires_at: '2099-12-31T23:59:59Z',
+          foto_url: leaderProfile.data?.foto_url || null
+        });
+      }
+
       // 1. Busca Perfil e Assinatura
       let profileRes: any = await supabaseAdmin.from('perfil_lider').select('nome_terreiro, cargo, role, tenant_id, is_admin_global, is_blocked, deleted_at, foto_url').eq('id', userId).maybeSingle();
       if (profileRes.error) throw profileRes.error;
@@ -1715,10 +1787,15 @@ async function startServer() {
   app.get("/api/events", async (req, res) => {
     const { tenantId, start, end } = req.query;
     try {
-      let query = supabaseAdmin.from('calendario_axe').select('*').order('data', { ascending: true });
-      if (tenantId) {
-        query = query.or(`tenant_id.eq.${tenantId},lider_id.eq.${tenantId}`);
+      if (!tenantId || typeof tenantId !== 'string' || tenantId.trim() === '') {
+        return res.status(400).json({ error: "tenantId é obrigatório" });
       }
+
+      const resolvedId = await resolveLeaderId(tenantId);
+      const ids = Array.from(new Set([tenantId, resolvedId].filter(Boolean)));
+      const tenantFilters = ids.flatMap((id) => [`tenant_id.eq.${id}`, `lider_id.eq.${id}`]).join(',');
+      let query = supabaseAdmin.from('calendario_axe').select('*').order('data', { ascending: true });
+      query = query.or(tenantFilters);
       if (start) query = query.gte('data', start as string);
       if (end) query = query.lte('data', end as string);
       

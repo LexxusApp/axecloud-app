@@ -63,6 +63,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
   const [isNotifying, setIsNotifying] = useState<string | null>(null);
 
   const hasAccess = hasPlanAccess(tenantData?.plan, 'gestao_eventos', tenantData?.is_admin_global);
+  const effectiveTenantId = tenantData?.tenant_id || (!isFilho ? user?.id : undefined);
 
   const handleNotifyAll = async (event: Event) => {
     try {
@@ -75,7 +76,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
           'Authorization': `Bearer ${session?.access_token}`
         },
         body: JSON.stringify({
-          tenantId: tenantData?.tenant_id || user?.id,
+          tenantId: effectiveTenantId,
           title: `🗓️ Novo Evento: ${event.titulo}`,
           body: `Marcado para ${new Date(event.data).toLocaleDateString('pt-BR')} às ${event.hora}. Contamos com sua presença!`,
           url: '/calendar'
@@ -103,9 +104,13 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
   });
 
   useEffect(() => {
-    fetchEvents();
-    fetchChildren();
-  }, [currentMonth]);
+    if (!effectiveTenantId) {
+      setLoading(true);
+      return;
+    }
+    void fetchEvents();
+    void fetchChildren();
+  }, [currentMonth, effectiveTenantId]);
 
   useEffect(() => {
     if (selectedEventForGuests) {
@@ -116,11 +121,13 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
   }, [selectedEventForGuests]);
 
   async function fetchChildren() {
+    if (!effectiveTenantId) return;
+
     try {
       const { data, error } = await supabase
         .from('filhos_de_santo')
         .select('id, nome, orixa_frente')
-        .eq('tenant_id', tenantData?.tenant_id || user?.id)
+        .eq('tenant_id', effectiveTenantId)
         .order('nome');
       
       if (error) throw error;
@@ -208,21 +215,26 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
   }
 
   async function fetchEvents() {
+    if (!effectiveTenantId) return;
+
     setLoading(true);
-    const tenantId = tenantData?.tenant_id;
     const monthStart = startOfMonth(currentMonth);
     const rangeEnd = addDays(endOfMonth(currentMonth), 7);
 
     try {
-      const url = `/api/events?tenantId=${tenantId || ''}&start=${format(monthStart, 'yyyy-MM-dd')}&end=${format(rangeEnd, 'yyyy-MM-dd')}`;
+      const url = `/api/events?tenantId=${encodeURIComponent(effectiveTenantId)}&start=${format(monthStart, 'yyyy-MM-dd')}&end=${format(rangeEnd, 'yyyy-MM-dd')}`;
       console.log('[DEBUG] Fetching events from:', url);
       const response = await fetch(url);
-      if (!response.ok) throw new Error('Failed to fetch events');
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new Error(`Failed to fetch events (${response.status}): ${body}`);
+      }
       const { data } = await response.json();
       console.log('[DEBUG] Events fetched:', data);
       setEvents(data || []);
     } catch (error) {
       console.error('Error fetching events:', error);
+      setEvents([]);
     } finally {
       setLoading(false);
     }
@@ -335,7 +347,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
       const eventData = {
         ...formData,
         lider_id: user?.id,
-        tenant_id: tenantData?.tenant_id || user?.id
+        tenant_id: effectiveTenantId || user?.id
       };
 
       const { data: { session } } = await supabase.auth.getSession();

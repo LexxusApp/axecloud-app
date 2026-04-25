@@ -41,50 +41,88 @@ export default function MensalidadeFilho({ user, tenantData, setActiveTab }: Men
   const [pixModalOpen, setPixModalOpen] = useState(false);
 
   const tenantId = tenantData?.tenant_id;
+  const userId = user?.id;
 
   useEffect(() => {
-    fetchData();
-  }, [user.id, tenantId]);
+    if (!userId || !tenantId) {
+      setLoading(true);
+      return;
+    }
+    void fetchData();
+  }, [userId, tenantId]);
 
   async function fetchData() {
+    if (!userId || !tenantId) return;
+
     try {
       setLoading(true);
       // 1. Buscar Perfil do Filho
-      const { data: childData } = await supabase
+      let { data: childData, error: childError } = await supabase
         .from('filhos_de_santo')
         .select('id, nome, tenant_id')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .maybeSingle();
+
+      if (!childData && user?.email) {
+        const byEmail = await supabase
+          .from('filhos_de_santo')
+          .select('id, nome, tenant_id')
+          .eq('email', user.email)
+          .maybeSingle();
+        childData = byEmail.data;
+        childError = byEmail.error;
+      }
+
+      if (childError) throw childError;
       
       setFilho(childData);
 
       // Buscar Configurações de Pix e Valor do Zelador via API (bypass RLS)
-      if (tenantId) {
-        try {
-          const pixRes = await fetch(`/api/v1/financial/pix-config?tenantId=${encodeURIComponent(tenantId)}`);
-          const { data: pixData } = pixRes.ok ? await pixRes.json() : { data: null };
-          if (pixData) {
-            if (pixData.valor_mensalidade) setValorMensalidadeConfig(Number(pixData.valor_mensalidade));
-            if (pixData.dia_vencimento) setDiaVencimento(Number(pixData.dia_vencimento));
-            if (pixData.chave_pix) {
-              setPixConfig({
-                chave_pix: pixData.chave_pix,
-                tipo_chave: pixData.tipo_chave,
-                nome_beneficiario: pixData.nome_beneficiario,
-                cidade: 'BRASIL'
-              });
-              setPixFetched(true);
-            }
+      try {
+        const pixRes = await fetch(`/api/v1/financial/pix-config?tenantId=${encodeURIComponent(tenantId)}`);
+        if (!pixRes.ok) {
+          const body = await pixRes.text().catch(() => '');
+          throw new Error(`Pix config HTTP ${pixRes.status}: ${body}`);
+        }
+
+        const { data: pixData } = await pixRes.json();
+        if (pixData) {
+          const configuredValue = Number(pixData.valor_mensalidade);
+          if (!Number.isNaN(configuredValue) && configuredValue > 0) {
+            setValorMensalidadeConfig(configuredValue);
+            setPendingMensalidade({
+              id: `mensalidade-${childData?.id || userId}`,
+              descricao: 'Mensalidade do terreiro',
+              valor: configuredValue,
+              status: 'pendente',
+            });
           }
-        } catch {}
+          if (pixData.dia_vencimento) setDiaVencimento(Number(pixData.dia_vencimento));
+          if (pixData.chave_pix) {
+            setPixConfig({
+              chave_pix: pixData.chave_pix,
+              tipo_chave: pixData.tipo_chave,
+              nome_beneficiario: pixData.nome_beneficiario,
+              cidade: 'BRASIL'
+            });
+          } else {
+            setPixConfig(null);
+          }
+        } else {
+          setPixConfig(null);
+        }
+      } catch (err) {
+        console.error('Erro ao carregar configuração Pix do filho:', err);
+        setPixConfig(null);
+      } finally {
+        setPixFetched(true);
       }
 
       // Histórico de mensalidades: coluna filho_id não existe em financeiro;
       // deixa lista vazia até integração completa de mensalidades individuais.
       setMensalidades([]);
-      setPendingMensalidade(undefined);
     } catch (error) {
-      // Erro silencioso — não logar no console em produção
+      console.error('Erro ao carregar mensalidade do filho:', error);
     } finally {
       setLoading(false);
     }
@@ -95,7 +133,11 @@ export default function MensalidadeFilho({ user, tenantData, setActiveTab }: Men
     setLoadingPix(true);
     try {
       const res = await fetch(`/api/v1/financial/pix-config?tenantId=${encodeURIComponent(tenantId)}`);
-      const { data } = res.ok ? await res.json() : { data: null };
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`Pix config HTTP ${res.status}: ${body}`);
+      }
+      const { data } = await res.json();
       if (data?.chave_pix) {
         setPixConfig({
           chave_pix: data.chave_pix,
@@ -104,6 +146,8 @@ export default function MensalidadeFilho({ user, tenantData, setActiveTab }: Men
           cidade: 'BRASIL'
         });
         if (data.dia_vencimento) setDiaVencimento(Number(data.dia_vencimento));
+      } else {
+        setPixConfig(null);
       }
     } catch (err) {
       console.error('Error fetching pix config:', err);
