@@ -3,10 +3,10 @@ import NotificationPanel from '../components/NotificationPanel';
 import {
   Plus,
   ChevronRight,
-  TrendingUp,
   ArrowUpRight,
   ArrowDownRight,
-  MoreVertical
+  MoreVertical,
+  Wallet,
 } from 'lucide-react';
 import {
   format,
@@ -17,6 +17,9 @@ import {
   eachDayOfInterval,
   isSameMonth,
   isSameDay,
+  parseISO,
+  isWithinInterval,
+  subMonths,
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -30,6 +33,34 @@ import {
 import { cn } from '../lib/utils';
 import LuxuryLoading from '../components/LuxuryLoading';
 import { supabase } from '../lib/supabase';
+
+/** Alinha com a tabela `financeiro`: entrada/saída; aceita legado receita/despesa. */
+function normalizeMovimentoTipo(tipo: string | undefined | null): 'entrada' | 'saida' | 'outro' {
+  const t = (tipo || '').toLowerCase();
+  if (t === 'entrada' || t === 'receita') return 'entrada';
+  if (t === 'saida' || t === 'saída' || t === 'despesa') return 'saida';
+  return 'outro';
+}
+
+/** Receita só entra no total se estiver confirmada (ex.: mensalidade baixada). */
+function entradaFinanceiraConfirmada(t: { tipo?: string; status?: string | null }): boolean {
+  if (normalizeMovimentoTipo(t.tipo) !== 'entrada') return false;
+  const raw = t.status;
+  if (raw == null || String(raw).trim() === '') return true;
+  const st = String(raw).toLowerCase();
+  if (st === 'pendente' || st === 'pendência' || st === 'cancelado' || st === 'cancelada') return false;
+  return true;
+}
+
+function parseFinanceiroDate(value: string | undefined | null): Date | null {
+  if (!value) return null;
+  try {
+    const d = parseISO(value.includes('T') ? value : `${value}T12:00:00`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  } catch {
+    return null;
+  }
+}
 
 interface DashboardProps {
   setActiveTab: (tab: string) => void;
@@ -45,15 +76,16 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
   const tenantId = tenantData?.tenant_id;
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
-    totalReceita: 12650,
-    totalDespesa: 2850,
-    despesasExtras: 2350,
-    lucroLiquido: 10300,
-    growth: 15
+    totalReceita: 0,
+    totalDespesa: 0,
+    lucroLiquido: 0,
+    growthPct: null as number | null,
+    marginPct: null as number | null,
   });
   const [childrenData, setChildrenData] = useState<any[]>([]);
-  const [chartData, setChartData] = useState<any[]>([]);
+  const [chartData, setChartData] = useState<{ val: number }[]>([]);
   const [historyData, setHistoryData] = useState<any[]>([]);
+  const [hasMonthFinanceData, setHasMonthFinanceData] = useState(false);
 
   const dashboardCalendar = useMemo(() => {
     const anchor = new Date();
@@ -99,7 +131,7 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
         const children = (childrenRes.data || []).filter((c: any) => c.status === 'Ativo');
         setChildrenData(children.slice(0, 4));
 
-        const transactions = transactionsRes.data || [];
+        const transactions = (transactionsRes.data || []) as any[];
         const lojaRows = (lojaRes.data || []) as any[];
 
         const lojaHistorico = lojaRows.map((p) => {
@@ -125,24 +157,78 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
         );
         setHistoryData(merged.slice(0, 8));
 
-        const currentMonth = new Date().getMonth();
-        const monthTransactions = transactions.filter((t: any) => new Date(t.data).getMonth() === currentMonth);
-        
-        const rec = monthTransactions.filter((t: any) => t.tipo === 'entrada').reduce((acc: number, t: any) => acc + (Number(t.valor) || 0), 0) || 12650;
-        const des = monthTransactions.filter((t: any) => t.tipo === 'saida').reduce((acc: number, t: any) => acc + (Number(t.valor) || 0), 0) || 2850;
+        const anchor = new Date();
+        const curStart = startOfMonth(anchor);
+        const curEnd = endOfMonth(anchor);
+        const prevMonthRef = subMonths(anchor, 1);
+        const prevStart = startOfMonth(prevMonthRef);
+        const prevEnd = endOfMonth(prevMonthRef);
+
+        const inMonth = (t: any, start: Date, end: Date) => {
+          const d = parseFinanceiroDate(typeof t.data === 'string' ? t.data : t.created_at);
+          if (!d) return false;
+          return isWithinInterval(d, { start, end });
+        };
+
+        const monthTx = transactions.filter((t) => inMonth(t, curStart, curEnd));
+
+        const rec = monthTx
+          .filter((t) => entradaFinanceiraConfirmada(t))
+          .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
+
+        const des = monthTx
+          .filter((t) => normalizeMovimentoTipo(t.tipo) === 'saida')
+          .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
+
+        const prevRec = transactions
+          .filter((t) => inMonth(t, prevStart, prevEnd) && entradaFinanceiraConfirmada(t))
+          .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
+
+        let growthPct: number | null = null;
+        if (prevRec > 0) {
+          growthPct = Math.round(((rec - prevRec) / prevRec) * 100);
+        } else if (rec > 0) {
+          growthPct = 100;
+        } else {
+          growthPct = null;
+        }
+
+        const lucro = rec - des;
+        let marginPct: number | null = null;
+        if (rec > 0) {
+          marginPct = Math.round((lucro / rec) * 100);
+        } else if (rec === 0 && des === 0) {
+          marginPct = null;
+        } else {
+          marginPct = null;
+        }
+
+        const hasData = rec > 0 || des > 0;
+        setHasMonthFinanceData(hasData);
 
         setStats({
           totalReceita: rec,
           totalDespesa: des,
-          despesasExtras: 2350,
-          lucroLiquido: rec - des,
-          growth: 15
+          lucroLiquido: lucro,
+          growthPct,
+          marginPct,
         });
 
-        // Mock chart data to look exactly like the image (curvy with dots)
-        setChartData([
-          { val: 100 }, { val: 250 }, { val: 180 }, { val: 320 }, { val: 240 }, { val: 400 }, { val: 300 }, { val: 450 }
-        ]);
+        const daysCur = eachDayOfInterval({ start: curStart, end: curEnd });
+        const receitaPorDia: Record<string, number> = {};
+        monthTx.forEach((t) => {
+          if (!entradaFinanceiraConfirmada(t)) return;
+          const d = parseFinanceiroDate(typeof t.data === 'string' ? t.data : t.created_at);
+          if (!d) return;
+          const key = format(d, 'yyyy-MM-dd');
+          receitaPorDia[key] = (receitaPorDia[key] || 0) + (Number(t.valor) || 0);
+        });
+        let cum = 0;
+        const series = daysCur.map((day) => {
+          cum += receitaPorDia[format(day, 'yyyy-MM-dd')] || 0;
+          return { val: cum };
+        });
+        setChartData(series.length > 0 ? series : [{ val: 0 }]);
 
       } catch (e) {
         console.error('Error fetching dashboard data:', e);
@@ -217,11 +303,24 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
                   <h2 className="text-5xl font-black mt-2 tracking-tighter">
                     {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.totalReceita)}
                   </h2>
-                  <div className="flex items-center gap-2 mt-4 text-[13px] font-bold">
-                    <span className="text-emerald-500 flex items-center gap-1">
-                       <Plus className="w-3.5 h-3.5" /> {stats.growth}%
-                    </span>
-                    <span className="text-gray-500">em relação ao mês anterior</span>
+                  <div className="flex flex-wrap items-center gap-2 mt-4 text-[13px] font-bold">
+                    {stats.growthPct !== null ? (
+                      <>
+                        <span
+                          className={cn(
+                            'flex items-center gap-1',
+                            stats.growthPct >= 0 ? 'text-emerald-500' : 'text-rose-500'
+                          )}
+                        >
+                          {stats.growthPct >= 0 ? <Plus className="w-3.5 h-3.5" /> : null}
+                          {stats.growthPct < 0 ? '−' : null}
+                          {Math.abs(stats.growthPct)}%
+                        </span>
+                        <span className="text-gray-500 font-medium">em relação ao mês anterior (receitas)</span>
+                      </>
+                    ) : (
+                      <span className="text-gray-500 font-medium">Sem comparativo com o mês anterior</span>
+                    )}
                   </div>
                </div>
                <div className="flex gap-2">
@@ -232,31 +331,50 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
             </div>
 
             <div className="h-44 w-full mt-6 relative z-10" style={{ minWidth: 0 }}>
-               <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={176} debounce={50}>
-                  <AreaChart data={chartData}>
-                    <defs>
-                      <linearGradient id="colorWave" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#D4AF37" stopOpacity={0.15}/>
-                        <stop offset="95%" stopColor="#D4AF37" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <Area 
-                      type="monotone" 
-                      dataKey="val" 
-                      stroke="#D4AF37" 
-                      strokeWidth={3} 
-                      fillOpacity={1} 
-                      fill="url(#colorWave)" 
-                      animationDuration={3000}
-                    />
-                  </AreaChart>
-               </ResponsiveContainer>
-               {/* Decorative dots to match the image style */}
-               <div className="absolute top-0 left-0 w-full h-full pointer-events-none opacity-40">
-                  <div className="absolute top-1/4 left-1/4 w-1.5 h-1.5 bg-[#D4AF37] rounded-full shadow-[0_0_10px_#D4AF37]"></div>
-                  <div className="absolute top-3/4 left-1/2 w-1.5 h-1.5 bg-[#D4AF37] rounded-full shadow-[0_0_10px_#D4AF37]"></div>
-                  <div className="absolute top-2/3 right-1/4 w-2 h-2 bg-[#D4AF37] rounded-full shadow-[0_0_12px_#D4AF37]"></div>
-               </div>
+              {!hasMonthFinanceData ? (
+                <div className="flex h-full min-h-[176px] flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/25 px-6 text-center">
+                  <Wallet className="mb-3 h-10 w-10 text-[#D4AF37]/35" aria-hidden />
+                  <p className="text-sm font-bold text-gray-400">Nenhum lançamento financeiro neste mês</p>
+                  <p className="mt-1 max-w-sm text-xs font-medium leading-relaxed text-gray-600">
+                    Quando houver entradas confirmadas ou saídas no painel financeiro, o gráfico e o resumo serão preenchidos automaticamente.
+                  </p>
+                </div>
+              ) : stats.totalReceita <= 0 ? (
+                <div className="flex h-full min-h-[176px] flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/25 px-6 text-center">
+                  <Wallet className="mb-3 h-10 w-10 text-[#D4AF37]/35" aria-hidden />
+                  <p className="text-sm font-bold text-gray-400">Sem receitas confirmadas neste mês</p>
+                  <p className="mt-1 max-w-sm text-xs font-medium leading-relaxed text-gray-600">
+                    Baixe mensalidades ou registre entradas no financeiro para ver a evolução aqui.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={176} debounce={50}>
+                    <AreaChart data={chartData}>
+                      <defs>
+                        <linearGradient id="colorWave" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#D4AF37" stopOpacity={0.15} />
+                          <stop offset="95%" stopColor="#D4AF37" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <Area
+                        type="monotone"
+                        dataKey="val"
+                        stroke="#D4AF37"
+                        strokeWidth={3}
+                        fillOpacity={1}
+                        fill="url(#colorWave)"
+                        animationDuration={900}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                  <div className="pointer-events-none absolute inset-0 opacity-40">
+                    <div className="absolute left-1/4 top-1/4 h-1.5 w-1.5 rounded-full bg-[#D4AF37] shadow-[0_0_10px_#D4AF37]" />
+                    <div className="absolute left-1/2 top-3/4 h-1.5 w-1.5 rounded-full bg-[#D4AF37] shadow-[0_0_10px_#D4AF37]" />
+                    <div className="absolute right-1/4 top-2/3 h-2 w-2 rounded-full bg-[#D4AF37] shadow-[0_0_12px_#D4AF37]" />
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -313,59 +431,93 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
           <div className="bg-[#121212] rounded-[2rem] border border-white/5 shadow-2xl p-8 flex flex-col md:flex-row gap-10">
              <div className="flex-1">
                 <h3 className="text-xl font-bold mb-8">Resumo Financeiro</h3>
-                <div className="grid grid-cols-2 gap-x-12 gap-y-8">
-                   <div>
+                {!hasMonthFinanceData ? (
+                  <div className="flex min-h-[160px] flex-col items-start justify-center rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-8">
+                    <Wallet className="mb-3 h-9 w-9 text-[#D4AF37]/35" aria-hidden />
+                    <p className="text-sm font-bold text-gray-400">Nenhum dado neste mês</p>
+                    <p className="mt-1 max-w-md text-xs font-medium leading-relaxed text-gray-600">
+                      Receitas, despesas e lucro aparecem com base nos lançamentos do mês atual na tabela financeira do terreiro.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-y-8 sm:grid-cols-3 sm:gap-x-8">
+                    <div>
                       <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Receitas</p>
-                      <p className="text-lg font-black text-emerald-500 mt-1 tracking-tighter">
+                      <p className="mt-1 text-lg font-black tracking-tighter text-emerald-500">
                         {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.totalReceita)}
                       </p>
-                   </div>
-                   <div>
+                      <p className="mt-1 text-[10px] font-medium text-gray-600">Entradas confirmadas no mês</p>
+                    </div>
+                    <div>
                       <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Despesas</p>
-                      <p className="text-lg font-black text-rose-500 mt-1 tracking-tighter">
+                      <p className="mt-1 text-lg font-black tracking-tighter text-rose-500">
                         {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.totalDespesa)}
                       </p>
-                   </div>
-                   <div>
-                      <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Despesas</p>
-                      <p className="text-lg font-black text-white mt-1 tracking-tighter">
-                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.despesasExtras)}
-                      </p>
-                   </div>
-                   <div>
-                      <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Lucro Líquido</p>
-                      <p className="text-lg font-black text-white mt-1 tracking-tighter">
+                      <p className="mt-1 text-[10px] font-medium text-gray-600">Saídas registradas no mês</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Lucro líquido</p>
+                      <p
+                        className={cn(
+                          'mt-1 text-lg font-black tracking-tighter',
+                          stats.lucroLiquido >= 0 ? 'text-white' : 'text-rose-400'
+                        )}
+                      >
                         {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.lucroLiquido)}
                       </p>
-                   </div>
-                </div>
+                      <p className="mt-1 text-[10px] font-medium text-gray-600">Receitas − despesas</p>
+                    </div>
+                  </div>
+                )}
              </div>
              
              <div className="flex flex-col items-center justify-center p-6 bg-black/20 rounded-3xl border border-white/5 min-w-[200px] relative overflow-hidden group">
                 <div className="absolute inset-0 bg-[#D4AF37]/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                 <div className="relative z-10 w-40 h-40" style={{ minWidth: 0 }}>
-                   <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={160} debounce={50}>
-                      <PieChart>
-                         <Pie
-                           data={[{ val: 81 }, { val: 19 }]}
-                           cx="50%"
-                           cy="50%"
-                           innerRadius={55}
-                           outerRadius={65}
-                           stroke="none"
-                           dataKey="val"
-                           startAngle={90}
-                           endAngle={-270}
-                         >
+                  {!hasMonthFinanceData ? (
+                    <div className="flex h-full min-h-[160px] flex-col items-center justify-center px-2 text-center">
+                      <Wallet className="mb-2 h-8 w-8 text-[#D4AF37]/30" aria-hidden />
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-600">Sem dados</p>
+                    </div>
+                  ) : (
+                    <>
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={160} debounce={50}>
+                        <PieChart>
+                          <Pie
+                            data={(() => {
+                              const fluxo = stats.totalReceita + stats.totalDespesa;
+                              if (fluxo <= 0) return [{ val: 0 }, { val: 1 }];
+                              const recPct = Math.round((stats.totalReceita / fluxo) * 100);
+                              return [{ val: Math.max(0, recPct) }, { val: Math.max(0, 100 - recPct) }];
+                            })()}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={55}
+                            outerRadius={65}
+                            stroke="none"
+                            dataKey="val"
+                            startAngle={90}
+                            endAngle={-270}
+                          >
                             <Cell fill="#D4AF37" />
-                            <Cell fill="rgba(255,255,255,0.03)" />
-                         </Pie>
-                      </PieChart>
-                   </ResponsiveContainer>
-                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                      <span className="text-3xl font-black text-white">81%</span>
-                      <span className="text-[8px] font-black text-gray-500 uppercase tracking-[0.2em] mt-1">Lucratividade</span>
-                   </div>
+                            <Cell fill="rgba(255,255,255,0.06)" />
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-3xl font-black text-white">
+                          {stats.totalReceita > 0 && stats.marginPct !== null
+                            ? `${stats.marginPct}%`
+                            : `${Math.round(
+                                (stats.totalReceita / Math.max(stats.totalReceita + stats.totalDespesa, 1)) * 100
+                              )}%`}
+                        </span>
+                        <span className="mt-1 text-[8px] font-black uppercase tracking-[0.2em] text-gray-500">
+                          {stats.totalReceita > 0 ? 'Lucro ÷ receitas' : 'Receitas no fluxo'}
+                        </span>
+                      </div>
+                    </>
+                  )}
                 </div>
              </div>
           </div>
