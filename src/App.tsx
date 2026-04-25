@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const SYSTEM_VERSION = '1.9.50'; // Mobile: cards de mensalidade e WhatsApp
+const SYSTEM_VERSION = '1.9.51'; // Vercel: rota dedicada filho-login
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';
