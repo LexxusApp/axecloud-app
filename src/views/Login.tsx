@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Lock, Mail, ArrowRight, Loader2, UserCircle2, KeyRound } from 'lucide-react';
+import { Lock, Mail, ArrowRight, Loader2, UserCircle2, KeyRound, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
 
@@ -13,6 +13,7 @@ export default function Login() {
   const [cpfPrefix, setCpfPrefix] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const wasUpdated = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('updated') === 'true';
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,6 +81,15 @@ export default function Login() {
         animate={{ opacity: 1, y: 0 }}
         className="z-10 w-full max-w-[380px] space-y-6"
       >
+        {wasUpdated && (
+          <div className="flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/15 px-4 py-3 text-primary shadow-[0_0_30px_rgba(251,188,0,0.12)]">
+            <AlertCircle className="h-5 w-5 shrink-0" />
+            <p className="text-sm font-black leading-snug">
+              Sistema Atualizado. Faça o Login Novamente.
+            </p>
+          </div>
+        )}
+
         {/* Logo & Title */}
         <div className="text-center space-y-4">
           <motion.div 

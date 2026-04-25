@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const SYSTEM_VERSION = '1.9.56'; // pwa: manifesto e service worker auto update
-
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';
 import Children from './views/Children';
@@ -30,6 +28,9 @@ import { hasPlanAccess, isLifetimePlan } from './constants/plans';
 import Paywall from './components/Paywall';
 import Subscription from './views/Subscription';
 import { useWebPush } from './hooks/useWebPush';
+import { APP_VERSION } from './config/version';
+
+const SYSTEM_VERSION = APP_VERSION; // force logout on update
 
 const FILHO_ALLOWED_TABS = new Set(['profile', 'perfil', 'financial', 'calendar', 'library', 'store', 'mural']);
 
@@ -41,6 +42,33 @@ function isFilhoIdentity(user?: { email?: string | null; user_metadata?: any } |
   const role = String(user?.user_metadata?.role || roleFallback || '').toLowerCase().trim();
   const email = String(user?.email || emailFallback || '').toLowerCase().trim();
   return role === 'filho' || (email.startsWith('f_') && email.endsWith('@axecloud.internal'));
+}
+
+function clearUserSessionStorage() {
+  const localKeysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (!key || key === 'axecloud_version') continue;
+    if (
+      key.startsWith('sb-') ||
+      key.includes('supabase') ||
+      key === 'axecloud_notifications' ||
+      key === 'axecloud_mural_read'
+    ) {
+      localKeysToRemove.push(key);
+    }
+  }
+  localKeysToRemove.forEach((key) => localStorage.removeItem(key));
+
+  const sessionKeysToRemove: string[] = [];
+  for (let i = 0; i < sessionStorage.length; i += 1) {
+    const key = sessionStorage.key(i);
+    if (!key) continue;
+    if (key.startsWith('sb-') || key.includes('supabase') || key.startsWith('axecloud_')) {
+      sessionKeysToRemove.push(key);
+    }
+  }
+  sessionKeysToRemove.forEach((key) => sessionStorage.removeItem(key));
 }
 
 export default function App() {
@@ -74,14 +102,35 @@ export default function App() {
 
   const initializedRef = useRef(false);
 
+  const forceMountAuthenticatedApp = (userId: string, userEmail?: string | null, authRole?: string) => {
+    const fallbackRole: 'admin' | 'filho' = isFilhoIdentity(null, userEmail || undefined, authRole)
+      ? 'filho'
+      : 'admin';
+    const isSuperAdmin = userEmail === 'lucasilvasiqueira@outlook.com.br';
+    const fallbackPlan = isSuperAdmin ? 'premium' : 'axe';
+
+    setUserRole(prev => prev || fallbackRole);
+    setTenantData(prev => prev || {
+      nome: 'Meu Terreiro',
+      plan: fallbackPlan,
+      tenant_id: userId,
+      role: fallbackRole,
+    });
+    setIsAdminGlobal(prev => prev || isSuperAdmin);
+    setIsMasterActive(prev => prev || isSuperAdmin);
+    setSubscriptionActive(true);
+    setActiveTab(prev => fallbackRole === 'filho' ? normalizeFilhoTab(prev) : prev);
+    setLoading(false);
+  };
+
   const loadAllTenantData = async (userId: string, userEmail?: string, authRole?: string) => {
     let retries = 5;
     const isFilhoAuth = isFilhoIdentity(null, userEmail, authRole);
     
     // Safety Net: Garantia de que o loader sairá em no máximo 15s
     const safetyTimeout = setTimeout(() => {
-      setLoading(false);
       console.warn('[SYSTEM] Safety timeout atingido. Forçando encerramento do loader.');
+      forceMountAuthenticatedApp(userId, userEmail, authRole);
     }, 15000);
 
     try {
@@ -260,16 +309,15 @@ export default function App() {
       
       if (lastVersion !== SYSTEM_VERSION) {
         console.log('[SYSTEM] Nova versão detectada:', SYSTEM_VERSION);
-        localStorage.setItem('axecloud_version', SYSTEM_VERSION);
-        // Remove apenas notificações de versão ANTIGAS (sys_X.X.X) — mantém plano e pagamento
         try {
-          const notifs = JSON.parse(localStorage.getItem('axecloud_notifications') || '[]');
-          const cleaned = notifs.filter((n: any) => !(n.type === 'system' && n.id?.startsWith('sys_') && n.id !== `sys_${SYSTEM_VERSION}`));
-          localStorage.setItem('axecloud_notifications', JSON.stringify(cleaned));
-        } catch { /* ignora erros de parse */ }
-        // Force refresh due to system version bump
-        await supabase.auth.signOut();
-        window.location.reload();
+          await supabase.auth.signOut();
+        } catch (err) {
+          console.warn('[SYSTEM] Falha ao finalizar sessão durante atualização:', err);
+        } finally {
+          clearUserSessionStorage();
+          localStorage.setItem('axecloud_version', SYSTEM_VERSION);
+          window.location.assign('/login?updated=true');
+        }
       }
     };
 
@@ -331,9 +379,15 @@ export default function App() {
         }
       } catch (error: any) {
         if (error && error.message && (error.message.includes('stole it') || error.message.includes('Lock'))) {
+          if (session?.user) {
+            forceMountAuthenticatedApp(session.user.id, session.user.email, session.user.user_metadata?.role);
+          }
           return;
         }
         console.error('Error in onAuthStateChange:', error);
+        if (session?.user) {
+          forceMountAuthenticatedApp(session.user.id, session.user.email, session.user.user_metadata?.role);
+        }
       } finally {
         if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
            setLoading(false);
@@ -343,6 +397,12 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!loading && session?.user && !userRole) {
+      forceMountAuthenticatedApp(session.user.id, session.user.email, session.user.user_metadata?.role);
+    }
+  }, [loading, session, userRole]);
 
   useEffect(() => {
     const handleNavigateToSubscription = () => {
