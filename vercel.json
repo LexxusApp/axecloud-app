@@ -5,6 +5,10 @@
       "destination": "/api/auth/filho-login"
     },
     {
+      "source": "/api/tenant-info",
+      "destination": "/api/tenant-info"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/index"
     },
