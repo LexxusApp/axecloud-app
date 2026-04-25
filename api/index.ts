@@ -6,7 +6,6 @@ import axios from "axios";
 import { fileURLToPath } from "url";
 import cors from "cors";
 import webpush from "web-push";
-import { usesDistantSubscriptionExpiry } from "../src/constants/plans";
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);
@@ -30,6 +29,32 @@ function getServerEnv(...keys: string[]) {
   return undefined;
 }
 
+function canonicalPlanSlug(plan: string | undefined): string {
+  if (!plan) return 'axe';
+  const stripped = plan.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const p = stripped.toLowerCase().trim().replace(/\s+/g, ' ');
+  const compact = p.replace(/[\s_-]/g, '');
+
+  if (p === 'vita' || p === 'plano vita' || compact === 'planovita') return 'vita';
+  if (p === 'premium' || compact === 'premium') return 'premium';
+  if (p === 'oro' || compact === 'oro' || compact === 'planoor') return 'oro';
+  if (p === 'cortesia' || compact === 'cortesia') return 'cortesia';
+  if (p === 'axe' || p === 'free' || compact === 'axe' || compact === 'free') return p === 'free' ? 'free' : 'axe';
+  return p;
+}
+
+function isLifetimePlan(plan: string | undefined): boolean {
+  const c = canonicalPlanSlug(plan);
+  return c === 'cortesia' || c === 'vita';
+}
+
+function usesDistantSubscriptionExpiry(plan: string | undefined): boolean {
+  if (!plan) return false;
+  const raw = plan.toLowerCase().trim();
+  if (raw === 'premium') return true;
+  return isLifetimePlan(plan);
+}
+
 // Configuração Web Push
 const VAPID_PUBLIC_KEY = process.env.VITE_VAPID_PUBLIC_KEY || "BE8Nz7rSuhDrvaE7glwae51WL2CRGnqisSUN8VkZvi070qEqIkDfxC2ig8eExWwKRPuG6eUeU2BbjF1Cg_NATqA";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "5iJSYqqeGj3Et2d_hmg9eKoCX06-edBhbIQQMkfsabc";
@@ -40,12 +65,19 @@ webpush.setVapidDetails(
   VAPID_PRIVATE_KEY
 );
 
-const SUPABASE_URL = getServerEnv("VITE_SUPABASE_URL", "SUPABASE_URL");
-const SUPABASE_SERVICE_ROLE_KEY = getServerEnv("SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
+const SUPABASE_URL = getServerEnv("VITE_SUPABASE_URL", "SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL");
+const SUPABASE_SERVICE_ROLE_KEY = getServerEnv(
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "SUPABASE_SERVICE_KEY",
+  "VITE_SUPABASE_SERVICE_ROLE_KEY",
+  "VITE_SUPABASE_SERVICE_KEY"
+);
+const SUPABASE_ANON_KEY = getServerEnv("VITE_SUPABASE_ANON_KEY", "SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY");
+const SUPABASE_SERVER_KEY = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
 
 let supabaseAdmin: any;
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+if (!SUPABASE_URL || !SUPABASE_SERVER_KEY) {
   console.error("CRITICAL: Missing Supabase environment variables. Server will start but database features will fail.");
   console.error("VITE_SUPABASE_URL:", SUPABASE_URL ? "SET" : "MISSING");
   console.error("SUPABASE_SERVICE_ROLE_KEY:", SUPABASE_SERVICE_ROLE_KEY ? "SET" : "MISSING");
@@ -73,7 +105,11 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     })
   };
 } else {
-  supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  if (!SUPABASE_SERVICE_ROLE_KEY) {
+    console.warn("SUPABASE_SERVICE_ROLE_KEY is missing; using anon key fallback. Some server routes may fail due to RLS.");
+  }
+
+  supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVER_KEY, {
     auth: {
       autoRefreshToken: false,
       persistSession: false
@@ -933,10 +969,20 @@ async function startServer() {
     const userId = req.query.userId as string;
     const email = (req.query.email as string || '').toLowerCase().trim();
     if (!userId) return res.status(400).json({ error: "UserId is required" });
+    if (!SUPABASE_URL || !SUPABASE_SERVER_KEY) {
+      return res.status(503).json({
+        error: "Supabase não configurado na função da Vercel",
+        missing: {
+          supabaseUrl: !SUPABASE_URL,
+          supabaseKey: !SUPABASE_SERVER_KEY
+        }
+      });
+    }
 
     try {
       // 1. Busca Perfil e Assinatura
       let profileRes: any = await supabaseAdmin.from('perfil_lider').select('nome_terreiro, cargo, role, tenant_id, is_admin_global, is_blocked, deleted_at, foto_url').eq('id', userId).maybeSingle();
+      if (profileRes.error) throw profileRes.error;
       
       // Check if blocked or deleted
       if (profileRes.data?.deleted_at) {
@@ -947,6 +993,7 @@ async function startServer() {
       }
 
       let subRes: any = await supabaseAdmin.from('subscriptions').select('plan, status, expires_at').eq('id', userId).maybeSingle();
+      if (subRes.error) throw subRes.error;
 
       const isSuperAdmin = profileRes.data?.is_admin_global || 
                           email === 'lucasilvasiqueira@outlook.com.br';
@@ -976,11 +1023,12 @@ async function startServer() {
 
       // 2. Se não encontrou perfil de líder, pode ser um filho vinculado
       if (!profileRes.data) {
-        const { data: childData } = await supabaseAdmin
+        const { data: childData, error: childError } = await supabaseAdmin
           .from('filhos_de_santo')
           .select('lider_id, tenant_id')
           .eq('user_id', userId)
           .maybeSingle();
+        if (childError) throw childError;
         
         if (childData) {
           const leaderId = childData.tenant_id || childData.lider_id;
@@ -988,6 +1036,8 @@ async function startServer() {
             supabaseAdmin.from('perfil_lider').select('nome_terreiro, cargo, role, tenant_id, is_admin_global, is_blocked, deleted_at, foto_url').eq('id', leaderId).maybeSingle(),
             supabaseAdmin.from('subscriptions').select('plan, status, expires_at').eq('id', leaderId).maybeSingle()
           ]);
+          if (leaderProfile.error) throw leaderProfile.error;
+          if (leaderSub.error) throw leaderSub.error;
           
           if (leaderProfile.data?.deleted_at) {
             return res.status(403).json({ error: "Conta excluída", status: "deleted" });

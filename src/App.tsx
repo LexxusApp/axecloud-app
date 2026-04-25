@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const SYSTEM_VERSION = '1.9.45'; // Vercel: corrige env da API tenant-info
+const SYSTEM_VERSION = '1.9.47'; // Vercel: API sem import de src/constants
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';
