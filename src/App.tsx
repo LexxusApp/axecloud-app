@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const SYSTEM_VERSION = '1.9.51'; // Vercel: rota dedicada filho-login
+const SYSTEM_VERSION = '1.9.52'; // RBAC: portal exclusivo para filho
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';
@@ -30,6 +30,18 @@ import { hasPlanAccess, isLifetimePlan } from './constants/plans';
 import Paywall from './components/Paywall';
 import Subscription from './views/Subscription';
 import { useWebPush } from './hooks/useWebPush';
+
+const FILHO_ALLOWED_TABS = new Set(['profile', 'perfil', 'financial', 'calendar', 'library', 'store', 'mural']);
+
+function normalizeFilhoTab(tab: string) {
+  return FILHO_ALLOWED_TABS.has(tab) ? tab : 'profile';
+}
+
+function isFilhoIdentity(user?: { email?: string | null; user_metadata?: any } | null, emailFallback?: string, roleFallback?: string) {
+  const role = String(user?.user_metadata?.role || roleFallback || '').toLowerCase().trim();
+  const email = String(user?.email || emailFallback || '').toLowerCase().trim();
+  return role === 'filho' || (email.startsWith('f_') && email.endsWith('@axecloud.internal'));
+}
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -62,8 +74,9 @@ export default function App() {
 
   const initializedRef = useRef(false);
 
-  const loadAllTenantData = async (userId: string, userEmail?: string) => {
+  const loadAllTenantData = async (userId: string, userEmail?: string, authRole?: string) => {
     let retries = 5;
+    const isFilhoAuth = isFilhoIdentity(null, userEmail, authRole);
     
     // Safety Net: Garantia de que o loader sairá em no máximo 15s
     const safetyTimeout = setTimeout(() => {
@@ -94,7 +107,7 @@ export default function App() {
         // 1. Role & Admin Status
         // Normaliza: apenas 'filho' é tratado como filho — qualquer outro valor (admin, lider, zelador, etc.) é gestor.
         const rawRole = (data.role || 'admin').toLowerCase().trim();
-        const role: 'admin' | 'filho' = rawRole === 'filho' ? 'filho' : 'admin';
+        const role: 'admin' | 'filho' = rawRole === 'filho' || isFilhoAuth ? 'filho' : 'admin';
         setUserRole(role);
         
         // 2. Tenant Info
@@ -125,7 +138,8 @@ export default function App() {
 
           // Se for filho, garante que ele caia no Perfil (profile)
           if (role === 'filho') {
-            setActiveTab('profile');
+            setIsMasterActive(false);
+            setActiveTab(prev => normalizeFilhoTab(prev));
           }
 
           // 5. Se for filho, buscar o ID e foto_url dele na tabela filhos_de_santo
@@ -175,6 +189,15 @@ export default function App() {
           
           if (retries === 0) {
             const isSuperAdmin = userEmail === 'lucasilvasiqueira@outlook.com.br';
+            if (isFilhoAuth) {
+              setTenantData({ nome: 'Meu Terreiro', plan: 'axe', tenant_id: userId, role: 'filho' });
+              setIsAdminGlobal(false);
+              setIsMasterActive(false);
+              setUserRole('filho');
+              setSubscriptionActive(true);
+              setActiveTab(prev => normalizeFilhoTab(prev));
+              return;
+            }
             const plan = isSuperAdmin ? 'premium' : 'axe';
             setTenantData({ nome: 'Meu Terreiro', plan });
             setIsAdminGlobal(isSuperAdmin);
@@ -246,8 +269,15 @@ export default function App() {
             setLoading(true);
             // Sempre inicia na Home após sessão válida; evita aba 'profile' órfã (sem filho)
             // da sessão anterior. Filhos de santo são reposicionados em loadAllTenantData.
-            setActiveTab('dashboard');
-            await loadAllTenantData(session.user.id, session.user.email);
+            const isFilhoAuth = isFilhoIdentity(session.user);
+            setActiveTab(isFilhoAuth ? 'profile' : 'dashboard');
+            if (isFilhoAuth) {
+              setUserRole('filho');
+              setIsAdminGlobal(false);
+              setIsMasterActive(false);
+              setSubscriptionActive(true);
+            }
+            await loadAllTenantData(session.user.id, session.user.email, session.user.user_metadata?.role);
             initializedRef.current = true;
           }
         } else {
@@ -287,6 +317,12 @@ export default function App() {
     return () => window.removeEventListener('navigate-to-subscription', handleNavigateToSubscription);
   }, []);
 
+  useEffect(() => {
+    if (userRole === 'filho' && !FILHO_ALLOWED_TABS.has(activeTab)) {
+      setActiveTab('profile');
+    }
+  }, [userRole, activeTab]);
+
   const refreshAllData = async (newData?: { nome_terreiro?: string; foto_url?: string; cargo?: string | null }) => {
     if (session?.user) {
       
@@ -298,7 +334,7 @@ export default function App() {
           cargo: newData.cargo !== undefined ? newData.cargo : prev.cargo
         }) : null);
       } else {
-        await loadAllTenantData(session.user.id, session.user.email);
+        await loadAllTenantData(session.user.id, session.user.email, session.user.user_metadata?.role);
       }
     }
   };
@@ -391,6 +427,10 @@ export default function App() {
     );
   }
 
+  const navigateToTab = (tab: string) => {
+    setActiveTab(userRole === 'filho' ? normalizeFilhoTab(tab) : tab);
+  };
+
   const renderView = () => {
     // SISTEMA DO FILHO: Se for filho, ele tem um sistema de visualização dedicado
     // Independente de planos ou assinaturas do zelador.
@@ -403,13 +443,13 @@ export default function App() {
       // que o zelador/zeladora publica, sem precisar de assinatura própria.
       switch (activeTab) {
         case 'profile':
-        case 'perfil': return <PerfilFilho user={session.user} tenantData={hijoTenantData} setActiveTab={setActiveTab} />;
-        case 'financial': return <MensalidadeFilho user={session.user} tenantData={hijoTenantData} setActiveTab={setActiveTab} />;
-        case 'calendar': return <Calendar user={session.user} tenantData={hijoTenantData} setActiveTab={setActiveTab} userRole={userRole} />;
-        case 'library': return <Library user={session.user} userRole={userRole} tenantData={hijoTenantData} isAdminGlobal={false} setActiveTab={setActiveTab} />;
-        case 'store': return <Store userRole={userRole} tenantData={hijoTenantData} userId={session.user.id} isAdminGlobal={false} setActiveTab={setActiveTab} />;
-        case 'mural': return <NoticeBoard isAdmin={false} tenantData={hijoTenantData} setActiveTab={setActiveTab} />;
-        default: return <PerfilFilho user={session.user} tenantData={hijoTenantData} setActiveTab={setActiveTab} />;
+        case 'perfil': return <PerfilFilho user={session.user} tenantData={hijoTenantData} setActiveTab={navigateToTab} />;
+        case 'financial': return <MensalidadeFilho user={session.user} tenantData={hijoTenantData} setActiveTab={navigateToTab} />;
+        case 'calendar': return <Calendar user={session.user} tenantData={hijoTenantData} setActiveTab={navigateToTab} userRole={userRole} />;
+        case 'library': return <Library user={session.user} userRole={userRole} tenantData={hijoTenantData} isAdminGlobal={false} setActiveTab={navigateToTab} />;
+        case 'store': return <Store userRole={userRole} tenantData={hijoTenantData} userId={session.user.id} isAdminGlobal={false} setActiveTab={navigateToTab} />;
+        case 'mural': return <NoticeBoard isAdmin={false} tenantData={hijoTenantData} setActiveTab={navigateToTab} />;
+        default: return <PerfilFilho user={session.user} tenantData={hijoTenantData} setActiveTab={navigateToTab} />;
       }
     }
 
@@ -438,43 +478,43 @@ export default function App() {
         <Paywall 
           featureName={activeTab === 'financial' ? 'Financeiro' : activeTab === 'store' ? 'Loja do Axé' : activeTab === 'inventory' ? 'Almoxarifado' : 'Biblioteca'} 
           requiredPlan={requiredPlan}
-          onUpgrade={() => setActiveTab('subscription')}
+          onUpgrade={() => navigateToTab('subscription')}
         />
       );
     }
 
     switch (activeTab) {
       case 'dashboard': 
-        return <Dashboard setActiveTab={setActiveTab} user={session.user} userRole={userRole} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setSelectedChildId={setSelectedChildId} systemVersion={SYSTEM_VERSION} />;
+        return <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setSelectedChildId={setSelectedChildId} systemVersion={SYSTEM_VERSION} />;
       case 'children': 
-        return <Children setActiveTab={setActiveTab} user={session.user} setSelectedChildId={setSelectedChildId} tenantData={tenantData} />;
+        return <Children setActiveTab={navigateToTab} user={session.user} setSelectedChildId={setSelectedChildId} tenantData={tenantData} />;
       case 'inventory': 
-        return <Inventory tenantData={tenantData} userRole={userRole} isAdminGlobal={isAdminGlobal} setActiveTab={setActiveTab} />;
+        return <Inventory tenantData={tenantData} userRole={userRole} isAdminGlobal={isAdminGlobal} setActiveTab={navigateToTab} />;
       case 'calendar': 
-        return <Calendar user={session.user} userRole={userRole} tenantData={tenantData} setActiveTab={setActiveTab} />;
+        return <Calendar user={session.user} userRole={userRole} tenantData={tenantData} setActiveTab={navigateToTab} />;
       case 'mural':
         /* Neste ramo o usuário nunca é filho (filho tem switch próprio acima) — sempre gestão do terreiro */
-        return <NoticeBoard isAdmin tenantData={tenantData} setActiveTab={setActiveTab} />;
+        return <NoticeBoard isAdmin tenantData={tenantData} setActiveTab={navigateToTab} />;
       case 'financial': 
-        return <Financial userRole={userRole} userId={session.user.id} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setActiveTab={setActiveTab} />;
+        return <Financial userRole={userRole} userId={session.user.id} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setActiveTab={navigateToTab} />;
       case 'settings': 
-        return <Settings user={session.user} session={session} onRefresh={refreshAllData} tenantData={tenantData} setActiveTab={setActiveTab} />;
+        return <Settings user={session.user} session={session} onRefresh={refreshAllData} tenantData={tenantData} setActiveTab={navigateToTab} />;
       case 'library':
-        return <Library user={session.user} userRole={userRole} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setActiveTab={setActiveTab} />;
+        return <Library user={session.user} userRole={userRole} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setActiveTab={navigateToTab} />;
       case 'store':
-        return <Store userRole={userRole} tenantData={tenantData} userId={session.user.id} isAdminGlobal={isAdminGlobal} setActiveTab={setActiveTab} />;
+        return <Store userRole={userRole} tenantData={tenantData} userId={session.user.id} isAdminGlobal={isAdminGlobal} setActiveTab={navigateToTab} />;
       case 'admin': 
-        return isAdminGlobal ? <Admin session={session} tenantData={tenantData} setActiveTab={setActiveTab} /> : <Dashboard setActiveTab={setActiveTab} user={session.user} userRole={userRole} tenantData={tenantData} systemVersion={SYSTEM_VERSION} />;
+        return isAdminGlobal ? <Admin session={session} tenantData={tenantData} setActiveTab={navigateToTab} /> : <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} tenantData={tenantData} systemVersion={SYSTEM_VERSION} />;
       case 'profile':
       case 'perfil':
         if (!selectedChildId) {
-          return <Dashboard setActiveTab={setActiveTab} user={session.user} userRole={userRole} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setSelectedChildId={setSelectedChildId} systemVersion={SYSTEM_VERSION} />;
+          return <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setSelectedChildId={setSelectedChildId} systemVersion={SYSTEM_VERSION} />;
         }
-        return <ChildProfile childId={selectedChildId} setActiveTab={setActiveTab} user={session.user} tenantData={tenantData} isSelfView={false} />;
+        return <ChildProfile childId={selectedChildId} setActiveTab={navigateToTab} user={session.user} tenantData={tenantData} isSelfView={false} />;
       case 'subscription':
-        return <Subscription session={session} tenantData={tenantData} onPlanUpdated={refreshAllData} setActiveTab={setActiveTab} />;
+        return <Subscription session={session} tenantData={tenantData} onPlanUpdated={refreshAllData} setActiveTab={navigateToTab} />;
       default: 
-        return <Dashboard setActiveTab={setActiveTab} user={session.user} userRole={userRole} systemVersion={SYSTEM_VERSION} />;
+        return <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} systemVersion={SYSTEM_VERSION} />;
     }
   };
 
@@ -524,7 +564,7 @@ export default function App() {
       {userRole === 'filho' ? (
         <FilhoSidebar 
           activeTab={activeTab} 
-          setActiveTab={setActiveTab} 
+          setActiveTab={navigateToTab} 
           tenantData={tenantData}
           user={session?.user}
           filhoFotoUrl={filhoFotoUrl}
@@ -534,7 +574,7 @@ export default function App() {
       ) : (
         <Sidebar 
           activeTab={activeTab} 
-          setActiveTab={setActiveTab} 
+          setActiveTab={navigateToTab} 
           isMobileOpen={isMobileOpen} 
           setIsMobileOpen={setIsMobileOpen} 
           isAdmin={isAdminGlobal}
@@ -686,7 +726,7 @@ export default function App() {
           ]).map((item) => (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => navigateToTab(item.id)}
               className={cn(
                 "flex min-w-0 flex-1 basis-0 flex-col items-center gap-1 px-0.5 transition-all",
                 activeTab === item.id ? "text-primary" : "text-gray-500"
