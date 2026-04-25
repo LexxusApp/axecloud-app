@@ -274,27 +274,11 @@ export default function App() {
             await new Promise(resolve => setTimeout(resolve, 2000));
             continue;
           }
-          
-          if (retries === 0) {
-            const isSuperAdmin = userEmail === 'lucasilvasiqueira@outlook.com.br';
-            if (isFilhoAuth) {
-              setTenantData({ nome: 'Meu Terreiro', plan: 'axe', tenant_id: userId, role: 'filho' });
-              setIsAdminGlobal(false);
-              setIsMasterActive(false);
-              setUserRole('filho');
-              setSubscriptionActive(true);
-              setActiveTab(prev => normalizeFilhoTab(prev));
-              return;
-            }
-            const plan = isSuperAdmin ? 'premium' : 'axe';
-            setTenantData({ nome: 'Meu Terreiro', plan });
-            setIsAdminGlobal(isSuperAdmin);
-            setIsMasterActive(isSuperAdmin);
-            setUserRole('admin');
-            setSubscriptionActive(isSuperAdmin);
-          } else {
-            await new Promise(resolve => setTimeout(resolve, 1500));
-          }
+
+          // Nunca exibir tela de assinatura/lock só porque a API caiu (5xx) ou rede falhou
+          console.warn('[WARN] tenant-info indisponível após tentativas — fallback seguro.');
+          forceMountAuthenticatedApp(userId, userEmail, authRole);
+          return;
         }
       }
     } finally {

@@ -1179,21 +1179,22 @@ async function startServer() {
     try {
       // Prioridade: filho de santo vinculado. Em acesso direto, pode existir
       // perfil residual para o auth user do filho; esse perfil não deve definir o tenant.
-      let { data: linkedChild, error: linkedChildError } = await supabaseAdmin
+      const { data: childByUser, error: childByUserErr } = await supabaseAdmin
         .from('filhos_de_santo')
         .select('id, nome, lider_id, tenant_id')
         .eq('user_id', userId)
-        .maybeSingle();
-      if (linkedChildError) throw linkedChildError;
+        .limit(1);
+      if (childByUserErr) throw childByUserErr;
+      let linkedChild = childByUser?.[0] ?? null;
 
       if (!linkedChild && email) {
         const byEmail = await supabaseAdmin
           .from('filhos_de_santo')
           .select('id, nome, lider_id, tenant_id')
           .eq('email', email)
-          .maybeSingle();
+          .limit(1);
         if (byEmail.error) throw byEmail.error;
-        linkedChild = byEmail.data;
+        linkedChild = byEmail.data?.[0] ?? null;
       }
 
       if (linkedChild) {
@@ -1214,9 +1215,9 @@ async function startServer() {
             .from('perfil_lider')
             .select('id, nome_terreiro, cargo, role, tenant_id, is_admin_global, is_blocked, deleted_at, foto_url')
             .eq('tenant_id', linkedChild.tenant_id)
-            .maybeSingle();
+            .limit(1);
           if (alt.error) throw alt.error;
-          if (alt.data) leaderProfile = alt;
+          if (alt.data?.[0]) leaderProfile = { data: alt.data[0], error: null };
         }
 
         if (leaderProfile.data?.deleted_at) {
@@ -1292,20 +1293,21 @@ async function startServer() {
 
       // 2. Se não encontrou perfil de líder, pode ser um filho vinculado
       if (!profileRes.data) {
-        let { data: childData, error: childError } = await supabaseAdmin
+        const { data: cRows, error: childError } = await supabaseAdmin
           .from('filhos_de_santo')
           .select('lider_id, tenant_id')
           .eq('user_id', userId)
-          .maybeSingle();
+          .limit(1);
         if (childError) throw childError;
+        let childData = cRows?.[0] ?? null;
         if (!childData && email) {
           const r2 = await supabaseAdmin
             .from('filhos_de_santo')
             .select('lider_id, tenant_id')
             .eq('email', email)
-            .maybeSingle();
-          childData = r2.data;
+            .limit(1);
           if (r2.error) throw r2.error;
+          childData = r2.data?.[0] ?? null;
         }
 
         if (childData) {
@@ -1324,9 +1326,9 @@ async function startServer() {
               .from('perfil_lider')
               .select('nome_terreiro, cargo, role, tenant_id, is_admin_global, is_blocked, deleted_at, foto_url')
               .eq('tenant_id', childData.tenant_id)
-              .maybeSingle();
+              .limit(1);
             if (alt.error) throw alt.error;
-            if (alt.data) leaderProfile = alt;
+            if (alt.data?.[0]) leaderProfile = { data: alt.data[0], error: null };
           }
 
           const zeladorAuthId = leaderProfile.data?.id || candidateLeaderId;

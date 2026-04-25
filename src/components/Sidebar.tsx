@@ -147,22 +147,11 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
         isMobileOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="flex flex-col h-full p-6 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
-          {/* Logo AXÉCLOUD */}
+          {/* Marca AXÉCLOUD sem imagem externa */}
           <div className="mb-6 shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 flex items-center justify-center">
-                <img 
-                  src="/logo.png" 
-                  alt="Logo" 
-                  className="w-full h-auto"
-                  referrerPolicy="no-referrer"
-                  onError={(e) => {
-                    e.currentTarget.style.display = 'none';
-                    const fallback = e.currentTarget.nextElementSibling as HTMLElement;
-                    if (fallback) fallback.style.display = 'flex';
-                  }}
-                />
-                <div className="hidden relative w-8 h-8 flex items-center justify-center border-2 border-primary rounded-full">
+                <div className="relative flex h-8 w-8 items-center justify-center rounded-full border-2 border-primary">
                   <div className="w-3 h-3 bg-primary rounded-full" />
                   <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-0.5 h-2 bg-primary" />
                   <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-0.5 h-2 bg-primary" />
