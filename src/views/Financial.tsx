@@ -777,13 +777,88 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
       ) : (
         <div className="space-y-6">
           {activeView === 'mensalidades' ? (
-            <div className="card-luxury p-8">
-              <div className="flex items-center justify-between mb-8">
-                <h3 className="text-2xl font-black text-white px-0">Controle de Mensalidades</h3>
-                <p className="text-gray-400 font-medium px-0">Gerencie os pagamentos dos filhos de santo.</p>
+            <div className="card-luxury p-4 sm:p-6 lg:p-8">
+              <div className="mb-6 grid gap-2 sm:mb-8 sm:grid-cols-[1fr_auto] sm:items-center">
+                <h3 className="text-2xl font-black leading-tight text-white sm:text-2xl">Controle de Mensalidades</h3>
+                <p className="max-w-xs text-sm font-medium leading-relaxed text-gray-400 sm:text-right">Gerencie os pagamentos dos filhos de santo.</p>
               </div>
 
-              <div className="overflow-x-auto">
+              <div className="space-y-3 sm:hidden">
+                {children.map((child: { id: string; nome: string; created_at?: string; data_entrada?: string }) => {
+                  const inc = child.data_entrada || child.created_at;
+                  const dia = parseInt(pixConfig.dia_vencimento, 10) || 10;
+                  const state = mensalidadesState[child.id] || {
+                    valor: pixConfig.valor_mensalidade,
+                    data: computeProximaDataMensalidadePrevisao(inc, dia),
+                    pago: false,
+                  };
+                  return (
+                    <div key={child.id} className="rounded-xl border border-white/5 bg-white/[0.03] p-4">
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <h4 className="min-w-0 flex-1 text-base font-black leading-snug text-white">{child.nome}</h4>
+                        <span className={cn(
+                          "shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-widest",
+                          state.pago ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-500" : "border-red-500/20 bg-red-500/10 text-red-500"
+                        )}>
+                          {state.pago ? 'Pago' : 'Pendente'}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <label className="space-y-1.5">
+                          <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Valor</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={state.valor}
+                            onChange={e => setMensalidadesState(prev => ({ ...prev, [child.id]: { ...prev[child.id], valor: e.target.value } }))}
+                            className="h-11 w-full rounded-lg border border-border bg-background px-3 text-sm font-bold text-white outline-none focus:border-primary"
+                            disabled={state.pago}
+                          />
+                        </label>
+                        <label className="space-y-1.5">
+                          <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Vencimento</span>
+                          <input
+                            type="date"
+                            value={state.data}
+                            onChange={e => setMensalidadesState(prev => ({ ...prev, [child.id]: { ...prev[child.id], data: e.target.value } }))}
+                            className="h-11 w-full rounded-lg border border-border bg-background px-2 text-xs font-bold text-white outline-none focus:border-primary"
+                            disabled={state.pago}
+                          />
+                        </label>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => handleMensalidadePago(child.id, child.nome)}
+                          disabled={state.pago}
+                          className={cn(
+                            "h-10 rounded-lg text-xs font-black transition-all",
+                            state.pago ? "cursor-not-allowed bg-emerald-500/20 text-emerald-500" : "bg-white/10 text-white hover:bg-white/20"
+                          )}
+                        >
+                          {state.pago ? 'Registrado' : 'Pago'}
+                        </button>
+                        <button
+                          onClick={() => handleGerarCobranca(child.id, child.nome)}
+                          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#25D366]/10 text-xs font-black text-[#25D366] transition-all hover:bg-[#25D366]/20"
+                          title="Gerar Cobrança WhatsApp"
+                        >
+                          <MessageCircle className="h-4 w-4" />
+                          Cobrar
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {children.length === 0 && (
+                  <div className="rounded-xl border border-white/5 bg-white/[0.03] p-6 text-center text-sm font-medium text-gray-500">
+                    Nenhum filho de santo cadastrado.
+                  </div>
+                )}
+              </div>
+
+              <div className="hidden overflow-x-auto sm:block">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-white/5">

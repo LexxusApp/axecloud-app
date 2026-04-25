@@ -109,43 +109,43 @@ export default function WhatsAppConfig() {
   };
 
   return (
-    <div className="card-luxury p-10 space-y-8">
-      <div className="flex items-center gap-6 pb-6 border-b border-white/5">
-        <div className="p-5 rounded-3xl bg-emerald-500/10 text-emerald-500 shadow-2xl shadow-emerald-500/10 border border-emerald-500/20">
-          <MessageSquare className="w-8 h-8" />
+    <div className="card-luxury mx-auto w-full max-w-5xl space-y-6 p-5 sm:space-y-8 sm:p-8 lg:p-10">
+      <div className="grid gap-4 border-b border-white/5 pb-6 sm:grid-cols-[auto_1fr] sm:items-center sm:gap-6">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-500 shadow-2xl shadow-emerald-500/10 sm:h-20 sm:w-20 sm:rounded-3xl">
+          <MessageSquare className="h-8 w-8" />
         </div>
-        <div>
-          <h2 className="text-3xl font-black text-white">Conexão WhatsApp</h2>
-          <p className="text-gray-500 font-medium">Integre seu Terreiro com notificações automáticas via WhatsApp usando Baileys (Leve).</p>
+        <div className="min-w-0">
+          <h2 className="text-3xl font-black leading-tight text-white sm:text-3xl">Conexão WhatsApp</h2>
+          <p className="mt-1 max-w-xl text-sm font-medium leading-relaxed text-gray-500 sm:text-base">Integre seu Terreiro com notificações automáticas via WhatsApp usando Baileys (Leve).</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
+      <div className="grid grid-cols-1 gap-6 text-left md:grid-cols-2 md:gap-8">
         <div className="space-y-6">
           <div className="space-y-4">
-            <h3 className="text-xl font-bold text-white flex items-center gap-2">
+            <h3 className="flex items-center gap-2 text-xl font-bold text-white">
               <Shield className="w-5 h-5 text-emerald-500" />
               Status da Instância
             </h3>
-            <div className={`p-6 rounded-3xl border transition-all ${
+            <div className={`rounded-2xl border p-4 transition-all sm:p-6 ${
               status === 'CONNECTED' 
                 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500 font-black' 
                 : status === 'LOADING' || status === 'QRCODE'
                 ? 'bg-primary/10 border-primary/20 text-primary'
                 : 'bg-white/5 border-white/5 text-gray-400'
             }`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
+              <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-center">
+                <div className="flex min-w-0 items-center gap-3 sm:gap-4">
                   {status === 'LOADING' ? (
-                    <Loader2 className="w-6 h-6 animate-spin" />
+                    <Loader2 className="h-6 w-6 shrink-0 animate-spin" />
                   ) : status === 'CONNECTED' ? (
-                    <CheckCircle2 className="w-6 h-6" />
+                    <CheckCircle2 className="h-6 w-6 shrink-0" />
                   ) : status === 'QRCODE' ? (
-                    <Loader2 className="w-6 h-6 animate-pulse" />
+                    <Loader2 className="h-6 w-6 shrink-0 animate-pulse" />
                   ) : (
-                    <AlertCircle className="w-6 h-6" />
+                    <AlertCircle className="h-6 w-6 shrink-0" />
                   )}
-                  <span className="font-black uppercase tracking-widest text-sm">
+                  <span className="min-w-0 text-sm font-black uppercase tracking-widest">
                     {status === 'CONNECTED' ? 'Conectado' : 
                      status === 'LOADING' ? 'Inicializando...' : 
                      status === 'QRCODE' ? 'Aguardando QR Code' : 'Desconectado'}
@@ -155,7 +155,7 @@ export default function WhatsAppConfig() {
                   <button 
                     onClick={handleStart}
                     disabled={loading}
-                    className="px-6 py-2 bg-emerald-500 text-background rounded-xl font-black text-xs hover:scale-105 transition-all disabled:opacity-50"
+                    className="h-11 w-full rounded-xl bg-emerald-500 px-5 text-xs font-black text-background transition-all hover:scale-[1.02] disabled:opacity-50 sm:w-auto"
                   >
                     {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'CONECTAR AGORA'}
                   </button>
@@ -164,7 +164,7 @@ export default function WhatsAppConfig() {
             </div>
           </div>
 
-          <div className="p-6 rounded-3xl bg-white/5 border border-white/5 space-y-4">
+          <div className="space-y-4 rounded-2xl border border-white/5 bg-white/5 p-5 sm:p-6">
             <h4 className="text-sm font-black text-white uppercase tracking-widest">Recursos Ativos</h4>
             <ul className="space-y-3">
               {[
@@ -183,7 +183,7 @@ export default function WhatsAppConfig() {
         </div>
 
         <div className="space-y-6">
-          <div className="p-8 rounded-[2.5rem] bg-background border border-white/5 flex flex-col items-center justify-center text-center space-y-6 min-h-[300px]">
+          <div className="flex min-h-[260px] flex-col items-center justify-center space-y-6 rounded-2xl border border-white/5 bg-background p-5 text-center sm:min-h-[300px] sm:p-8">
             <AnimatePresence mode="wait">
               {status === 'DISCONNECTED' ? (
                 <motion.div 
@@ -191,7 +191,7 @@ export default function WhatsAppConfig() {
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                   className="space-y-6"
                 >
-                  <div className="w-48 h-48 bg-white/5 rounded-3xl p-4 flex items-center justify-center border border-white/5 border-dashed">
+                  <div className="flex h-40 w-40 items-center justify-center rounded-2xl border border-dashed border-white/5 bg-white/5 p-4 sm:h-48 sm:w-48">
                     <Link className="w-12 h-12 text-white/10" />
                   </div>
                   <div className="space-y-2">
@@ -207,7 +207,7 @@ export default function WhatsAppConfig() {
                   initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ opacity: 0 }}
                   className="space-y-6"
                 >
-                  <div className="w-48 h-48 bg-white rounded-3xl p-4 flex items-center justify-center shadow-[0_0_50px_rgba(255,255,255,0.1)]">
+                  <div className="flex h-40 w-40 items-center justify-center rounded-2xl bg-white p-4 shadow-[0_0_50px_rgba(255,255,255,0.1)] sm:h-48 sm:w-48">
                     <img src={qrCode} alt="WhatsApp QR Code" className="w-full h-full" referrerPolicy="no-referrer" />
                   </div>
                   <div className="space-y-2">
