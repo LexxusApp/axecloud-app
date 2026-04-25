@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const SYSTEM_VERSION = '1.9.47'; // Vercel: API sem import de src/constants
+const SYSTEM_VERSION = '1.9.49'; // Vercel: console limpo em rotas e loja
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';

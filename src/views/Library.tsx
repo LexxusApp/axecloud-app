@@ -186,17 +186,8 @@ export default function Library({ user, userRole, tenantData, isAdminGlobal, set
     }
   }, [tenantData?.tenant_id, user.id, userRole]);
 
-  useEffect(() => {
-    console.log('[DEBUG] Library tenantData:', tenantData);
-  }, [tenantData]);
-
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('[DEBUG] handleUpload called', { 
-      hasFile: !!newMaterial.file, 
-      hasTitulo: !!newMaterial.titulo, 
-      tenantId: tenantData?.tenant_id 
-    });
 
     if (!newMaterial.file) {
       alert('Por favor, selecione um arquivo PDF.');
@@ -224,54 +215,60 @@ export default function Library({ user, userRole, tenantData, isAdminGlobal, set
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('Sessão expirada. Faça login novamente.');
 
-      // Convert file to Base64
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const base64Data = (reader.result as string).split(',')[1];
-          
-          const response = await fetch('/api/v1/library/upload', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${session.access_token}`
-            },
-            body: JSON.stringify({
-              fileData: base64Data,
-              fileName: fileName,
-              contentType: file.type,
-              titulo: newMaterial.titulo,
-              categoria: newMaterial.categoria,
-              tenantId: effectiveTenantId
-            })
-          });
+      const uploadUrlResponse = await fetch('/api/v1/library/upload-url', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          fileName,
+          contentType: file.type,
+          categoria: newMaterial.categoria,
+          tenantId: effectiveTenantId
+        })
+      });
 
-          if (!response.ok) {
-            const errData = await response.json();
-            throw new Error(errData.error || 'Erro ao subir material pelo servidor');
-          }
+      const uploadUrlResult = await uploadUrlResponse.json();
+      if (!uploadUrlResponse.ok) {
+        throw new Error(uploadUrlResult.error || 'Erro ao preparar upload');
+      }
 
-          setIsUploadModalOpen(false);
-          setNewMaterial({ titulo: '', categoria: 'Cantigas', file: null });
-          fetchMaterials();
-        } catch (error: any) {
-          console.error('Error uploading material:', error);
-          alert('Erro ao subir material: ' + (error.message || 'Desconhecido'));
-        } finally {
-          setUploading(false);
-        }
-      };
+      const { error: uploadError } = await supabase.storage
+        .from('biblioteca_estudos')
+        .uploadToSignedUrl(uploadUrlResult.path, uploadUrlResult.token, file, {
+          contentType: file.type || uploadUrlResult.contentType || 'application/pdf',
+          upsert: true
+        });
 
-      reader.onerror = () => {
-        alert('Erro ao processar o arquivo.');
-        setUploading(false);
-      };
+      if (uploadError) throw uploadError;
 
-      reader.readAsDataURL(file);
+      const completeResponse = await fetch('/api/v1/library/complete-upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          storagePath: uploadUrlResult.path,
+          titulo: newMaterial.titulo,
+          categoria: newMaterial.categoria,
+          tenantId: effectiveTenantId
+        })
+      });
 
+      const completeResult = await completeResponse.json();
+      if (!completeResponse.ok) {
+        throw new Error(completeResult.error || 'Erro ao salvar material');
+      }
+
+      setIsUploadModalOpen(false);
+      setNewMaterial({ titulo: '', categoria: 'Cantigas', file: null });
+      fetchMaterials();
     } catch (error: any) {
-      console.error('Error initiating upload:', error);
-      alert('Erro ao iniciar upload: ' + error.message);
+      console.error('Error uploading material:', error);
+      alert('Erro ao subir material: ' + (error.message || 'Desconhecido'));
+    } finally {
       setUploading(false);
     }
   };

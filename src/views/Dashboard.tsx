@@ -101,9 +101,6 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
 
         const transactions = transactionsRes.data || [];
         const lojaRows = (lojaRes.data || []) as any[];
-        if (lojaRes.error) {
-          console.warn('[Dashboard] loja_pedidos:', lojaRes.error);
-        }
 
         const lojaHistorico = lojaRows.map((p) => {
           const acao = p.tipo === 'reserva' ? 'reservou na loja' : 'comprou na loja';

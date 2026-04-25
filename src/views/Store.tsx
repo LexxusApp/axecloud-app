@@ -119,8 +119,7 @@ export default function Store({ userRole, tenantData, userId, isAdminGlobal, set
         .limit(40);
       if (error) throw error;
       setLojaPedidos((data || []) as LojaPedidoRow[]);
-    } catch (e) {
-      console.error('[loja_pedidos] fetch', e);
+    } catch {
       setLojaPedidos([]);
     } finally {
       setLoadingPedidos(false);

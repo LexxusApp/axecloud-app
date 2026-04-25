@@ -76,6 +76,30 @@ const SUPABASE_ANON_KEY = getServerEnv("VITE_SUPABASE_ANON_KEY", "SUPABASE_ANON_
 const SUPABASE_SERVER_KEY = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
 
 let supabaseAdmin: any;
+let pixSupportsValorMensalidade = true;
+let pixSupportsDiaVencimento = true;
+
+function getPixConfigSelectClause() {
+  const baseColumns = ['id', 'terreiro_id', 'chave_pix', 'tipo_chave', 'nome_beneficiario'];
+  if (pixSupportsValorMensalidade) baseColumns.push('valor_mensalidade');
+  if (pixSupportsDiaVencimento) baseColumns.push('dia_vencimento');
+  return baseColumns.join(', ');
+}
+
+function sanitizePixConfigData(configData: any) {
+  const sanitized = { ...configData };
+  if (!pixSupportsValorMensalidade) delete sanitized.valor_mensalidade;
+  if (!pixSupportsDiaVencimento) delete sanitized.dia_vencimento;
+  return sanitized;
+}
+
+function slugifyStoragePath(str: string) {
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9_.-]/g, '_')
+    .toLowerCase();
+}
 
 if (!SUPABASE_URL || !SUPABASE_SERVER_KEY) {
   console.error("CRITICAL: Missing Supabase environment variables. Server will start but database features will fail.");
@@ -689,6 +713,152 @@ async function startServer() {
   };
   app.get("/api/v1/store/product-image-suggestion", handleStoreProductImageSuggestion);
   app.get("/api/store/product-image-suggestion", handleStoreProductImageSuggestion);
+
+  // API Route: Pix Config — GET e POST (bypasses RLS, resolve FK automaticamente)
+  app.get("/api/v1/financial/pix-config", async (req, res) => {
+    const { tenantId } = req.query;
+    if (!tenantId) return res.status(400).json({ error: "tenantId required" });
+
+    try {
+      const resolvedId = await resolveLeaderId(tenantId as string);
+      const { data, error } = await supabaseAdmin
+        .from('configuracoes_pix')
+        .select(getPixConfigSelectClause())
+        .or(`terreiro_id.eq.${resolvedId},terreiro_id.eq.${tenantId}`)
+        .maybeSingle();
+
+      if (error) throw error;
+      res.json({ data });
+    } catch (err: any) {
+      console.error("[SERVER] Erro ao buscar pix config:", err.message || err);
+      res.status(500).json({ error: err.message || "Erro ao buscar configuração PIX" });
+    }
+  });
+
+  app.post("/api/v1/financial/pix-config", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Não autorizado" });
+
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Token inválido" });
+
+      const { terreiro_id, chave_pix, tipo_chave, nome_beneficiario, valor_mensalidade, dia_vencimento } = req.body;
+      if (!terreiro_id) return res.status(400).json({ error: "terreiro_id required" });
+
+      const resolvedId = await resolveLeaderId(terreiro_id);
+      const configData: any = { terreiro_id: resolvedId, chave_pix, tipo_chave, nome_beneficiario };
+      if (valor_mensalidade !== undefined) configData.valor_mensalidade = parseFloat(valor_mensalidade) || 0;
+      if (dia_vencimento !== undefined) {
+        const dia = parseInt(dia_vencimento);
+        if (dia >= 1 && dia <= 31) configData.dia_vencimento = dia;
+      }
+
+      const sanitizedConfigData = sanitizePixConfigData(configData);
+      const { data: existing } = await supabaseAdmin
+        .from('configuracoes_pix')
+        .select('id')
+        .or(`terreiro_id.eq.${resolvedId},terreiro_id.eq.${terreiro_id}`)
+        .maybeSingle();
+
+      const { error } = existing
+        ? await supabaseAdmin.from('configuracoes_pix').update(sanitizedConfigData).eq('id', existing.id)
+        : await supabaseAdmin.from('configuracoes_pix').insert([sanitizedConfigData]);
+
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[SERVER] Erro ao salvar pix config:", err.message || err);
+      res.status(500).json({ error: err.message || "Erro ao salvar configuração PIX" });
+    }
+  });
+
+  // API Route: Get Library Materials (bypasses RLS — filhos podem ler materiais do zelador)
+  app.get("/api/v1/library/materials", async (req, res) => {
+    const { tenantId } = req.query;
+    if (!tenantId) return res.status(400).json({ error: "tenantId required" });
+
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('biblioteca')
+        .select('*')
+        .eq('tenant_id', tenantId as string)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      res.json({ data: data || [] });
+    } catch (err: any) {
+      console.error("[SERVER] Erro ao buscar materiais:", err.message || err);
+      res.status(500).json({ error: err.message || "Erro ao buscar materiais" });
+    }
+  });
+
+  app.post("/api/v1/library/upload-url", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const { fileName, contentType, categoria, tenantId } = req.body;
+    if (!authHeader || !fileName || !tenantId) {
+      return res.status(400).json({ error: "Unauthorized or missing data" });
+    }
+
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Unauthorized" });
+
+      const safeCategoria = slugifyStoragePath(categoria || 'geral');
+      const safeFileName = slugifyStoragePath(fileName);
+      const storagePath = `${tenantId}/${safeCategoria}/${Date.now()}_${safeFileName}`;
+
+      const { data, error } = await supabaseAdmin.storage
+        .from('biblioteca_estudos')
+        .createSignedUploadUrl(storagePath);
+
+      if (error) throw error;
+      res.json({
+        path: storagePath,
+        token: data.token,
+        contentType: contentType || 'application/pdf'
+      });
+    } catch (error: any) {
+      console.error("[SERVER] Erro ao criar URL de upload:", error.message || error);
+      res.status(500).json({ error: error.message || "Erro ao preparar upload" });
+    }
+  });
+
+  app.post("/api/v1/library/complete-upload", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const { storagePath, titulo, categoria, tenantId } = req.body;
+    if (!authHeader || !storagePath || !titulo || !tenantId) {
+      return res.status(400).json({ error: "Unauthorized or missing data" });
+    }
+
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Unauthorized" });
+
+      const { data: { publicUrl } } = supabaseAdmin.storage
+        .from('biblioteca_estudos')
+        .getPublicUrl(storagePath);
+
+      const { error: dbError } = await supabaseAdmin
+        .from('biblioteca')
+        .insert([{
+          titulo,
+          categoria,
+          arquivo_url: publicUrl,
+          tenant_id: tenantId,
+          storage_path: storagePath
+        }]);
+
+      if (dbError) throw dbError;
+      res.json({ success: true, publicUrl });
+    } catch (error: any) {
+      console.error("[SERVER] Erro ao finalizar upload:", error.message || error);
+      res.status(500).json({ error: error.message || "Erro interno ao salvar material" });
+    }
+  });
 
   // API Route: Create Tenant (Admin only)
   app.post("/api/admin/create-tenant", async (req, res) => {
