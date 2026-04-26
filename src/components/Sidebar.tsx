@@ -137,18 +137,21 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
 
   return (
     <>
-      {/* Mobile Overlay */}
+      {/* Mobile Overlay — sem backdrop-blur (pesado em GPU no celular) */}
       {isMobileOpen && (
         <div 
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] lg:hidden"
+          className="fixed inset-0 z-[60] bg-black/65 transition-opacity duration-200 ease-out lg:hidden"
           onClick={() => setIsMobileOpen(false)}
         />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar — só translateX animado; blur só no desktop */}
       <aside className={cn(
-        "fixed top-0 left-0 bottom-0 w-72 bg-black/80 backdrop-blur-[25px] border-r border-white/5 z-[70] transition-transform duration-500 lg:translate-x-0 flex flex-col lg:w-56",
-        isMobileOpen ? "translate-x-0" : "-translate-x-full"
+        "fixed left-0 top-0 bottom-0 z-[70] flex w-72 flex-col border-r border-white/5 lg:w-56",
+        "will-change-transform [transition:transform_250ms_cubic-bezier(0.4,0,0.2,1)] lg:will-change-auto",
+        "max-lg:bg-[#0a0a0a]/[0.98] max-lg:backdrop-blur-none",
+        "lg:bg-black/80 lg:backdrop-blur-md",
+        isMobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}>
         <div className="flex flex-col h-full p-6 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
           {/* Marca AXÉCLOUD sem imagem externa */}
