@@ -17,8 +17,6 @@ import {
   eachDayOfInterval,
   isSameMonth,
   isSameDay,
-  parseISO,
-  isWithinInterval,
   subMonths,
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -42,24 +40,24 @@ function normalizeMovimentoTipo(tipo: string | undefined | null): 'entrada' | 's
   return 'outro';
 }
 
-/** Receita só entra no total se estiver confirmada (ex.: mensalidade baixada). */
-function entradaFinanceiraConfirmada(t: { tipo?: string; status?: string | null }): boolean {
-  if (normalizeMovimentoTipo(t.tipo) !== 'entrada') return false;
-  const raw = t.status;
-  if (raw == null || String(raw).trim() === '') return true;
-  const st = String(raw).toLowerCase();
-  if (st === 'pendente' || st === 'pendência' || st === 'cancelado' || st === 'cancelada') return false;
-  return true;
-}
-
-function parseFinanceiroDate(value: string | undefined | null): Date | null {
-  if (!value) return null;
-  try {
-    const d = parseISO(value.includes('T') ? value : `${value}T12:00:00`);
-    return Number.isNaN(d.getTime()) ? null : d;
-  } catch {
-    return null;
+/**
+ * Alinha com `Financial.tsx` (useMemo de stats / gráfico): mês do calendário
+ * local a partir de `data`, com o mesmo `new Date` que a página Financeiro.
+ */
+function isLancamentoNoMesRef(
+  t: { data?: string; created_at?: string },
+  ref: Date
+): boolean {
+  const raw = t.data;
+  if (raw == null || String(raw).trim() === '') {
+    if (!t.created_at) return false;
+    const d = new Date(t.created_at);
+    if (Number.isNaN(d.getTime())) return false;
+    return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
   }
+  const d = new Date(raw as string);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
 }
 
 interface DashboardProps {
@@ -75,17 +73,10 @@ interface DashboardProps {
 export default function Dashboard({ setActiveTab, user, userRole = 'admin', tenantData, isAdminGlobal = false, setSelectedChildId, systemVersion = '1.0.0' }: DashboardProps) {
   const tenantId = tenantData?.tenant_id;
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({
-    totalReceita: 0,
-    totalDespesa: 0,
-    lucroLiquido: 0,
-    growthPct: null as number | null,
-    marginPct: null as number | null,
-  });
+  /** Lançamentos da tabela `financeiro` (via `/api/transactions`), no mesmo formato da página Financeiro. */
+  const [transactions, setTransactions] = useState<any[]>([]);
   const [childrenData, setChildrenData] = useState<any[]>([]);
-  const [chartData, setChartData] = useState<{ val: number }[]>([]);
   const [historyData, setHistoryData] = useState<any[]>([]);
-  const [hasMonthFinanceData, setHasMonthFinanceData] = useState(false);
 
   const dashboardCalendar = useMemo(() => {
     const anchor = new Date();
@@ -98,6 +89,82 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
     const monthTitle = rawMonth.charAt(0).toUpperCase() + rawMonth.slice(1);
     return { days, monthTitle, anchor };
   }, []);
+
+  const { stats, chartData, hasMonthFinanceData } = useMemo(() => {
+    const anchor = new Date();
+    const curStart = startOfMonth(anchor);
+    const curEnd = endOfMonth(anchor);
+    const prevMonthRef = subMonths(anchor, 1);
+
+    const monthTx = transactions.filter((t) => isLancamentoNoMesRef(t, anchor));
+
+    let rec = 0;
+    let des = 0;
+    for (const t of monthTx) {
+      const n = Number(t.valor) || 0;
+      const mt = normalizeMovimentoTipo(t.tipo);
+      if (mt === 'entrada') rec += n;
+      else if (mt === 'saida') des += n;
+    }
+
+    const prevRec = transactions
+      .filter(
+        (t) =>
+          isLancamentoNoMesRef(t, prevMonthRef) && normalizeMovimentoTipo(t.tipo) === 'entrada'
+      )
+      .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
+
+    let growthPct: number | null = null;
+    if (prevRec > 0) {
+      growthPct = Math.round(((rec - prevRec) / prevRec) * 100);
+    } else if (rec > 0) {
+      growthPct = 100;
+    }
+
+    const lucro = rec - des;
+    let marginPct: number | null = null;
+    if (rec > 0) {
+      marginPct = Math.round((lucro / rec) * 100);
+    } else if (rec === 0 && des === 0) {
+      marginPct = null;
+    } else {
+      marginPct = null;
+    }
+
+    const hasData = rec > 0 || des > 0;
+
+    const receitaPorDia: Record<string, number> = {};
+    for (const t of monthTx) {
+      if (normalizeMovimentoTipo(t.tipo) !== 'entrada') continue;
+      const rawD = t.data;
+      const key =
+        rawD != null && String(rawD).trim() !== ''
+          ? String(rawD).slice(0, 10)
+          : t.created_at
+            ? String(t.created_at).slice(0, 10)
+            : '';
+      if (!key) continue;
+      receitaPorDia[key] = (receitaPorDia[key] || 0) + (Number(t.valor) || 0);
+    }
+    const daysCur = eachDayOfInterval({ start: curStart, end: curEnd });
+    let cum = 0;
+    const series = daysCur.map((day) => {
+      cum += receitaPorDia[format(day, 'yyyy-MM-dd')] || 0;
+      return { val: cum };
+    });
+
+    return {
+      stats: {
+        totalReceita: rec,
+        totalDespesa: des,
+        lucroLiquido: lucro,
+        growthPct,
+        marginPct,
+      },
+      hasMonthFinanceData: hasData,
+      chartData: series.length > 0 ? series : [{ val: 0 }],
+    };
+  }, [transactions]);
 
   const fetchDashboardData = useCallback(async () => {
     try {
@@ -114,11 +181,22 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
         lojaTenantPk = plRow?.id || seed;
       }
 
-      const txUrl = `/api/transactions?tenantId=${encodeURIComponent(String(tenantId || user.id))}&userId=${encodeURIComponent(user.id)}&userRole=${encodeURIComponent(userRole || '')}&limit=400`;
+      const txUrl = `/api/transactions?tenantId=${encodeURIComponent(
+        tenantId || ''
+      )}&userId=${encodeURIComponent(user.id)}&userRole=${encodeURIComponent(
+        userRole || ''
+      )}&limit=400`;
 
-      const [childrenRes, transactionsRes, lojaRes] = await Promise.all([
+      const [childrenRes, txRes, lojaRes] = await Promise.all([
         fetch(`/api/children?userId=${user.id}&tenantId=${tenantId || user.id}`).then((r) => r.json()),
-        fetch(txUrl).then((r) => r.json()),
+        fetch(txUrl).then(async (r) => {
+          if (!r.ok) {
+            const errText = await r.text().catch(() => '');
+            console.error('[Dashboard] /api/transactions', r.status, errText);
+            return { data: [] as any[] };
+          }
+          return r.json() as Promise<{ data?: any[] }>;
+        }),
         userRole !== 'filho' && lojaTenantPk
           ? supabase
               .from('loja_pedidos')
@@ -132,7 +210,10 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
       const children = (childrenRes.data || []).filter((c: any) => c.status === 'Ativo');
       setChildrenData(children.slice(0, 4));
 
-      const transactions = (transactionsRes.data || []) as any[];
+      const rawTx = (txRes.data || []) as any[];
+      const normalized = rawTx.map((t) => ({ ...t, valor: Number(t.valor) || 0 }));
+      setTransactions(normalized);
+
       const lojaRows = (lojaRes.data || []) as any[];
 
       const lojaHistorico = lojaRows.map((p) => {
@@ -153,85 +234,13 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
         };
       });
 
-      const merged = [...transactions, ...lojaHistorico].sort(
+      const merged = [...normalized, ...lojaHistorico].sort(
         (a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()
       );
       setHistoryData(merged.slice(0, 8));
-
-      const anchor = new Date();
-      const curStart = startOfMonth(anchor);
-      const curEnd = endOfMonth(anchor);
-      const prevMonthRef = subMonths(anchor, 1);
-      const prevStart = startOfMonth(prevMonthRef);
-      const prevEnd = endOfMonth(prevMonthRef);
-
-      const inMonth = (t: any, start: Date, end: Date) => {
-        const d = parseFinanceiroDate(typeof t.data === 'string' ? t.data : t.created_at);
-        if (!d) return false;
-        return isWithinInterval(d, { start, end });
-      };
-
-      const monthTx = transactions.filter((t) => inMonth(t, curStart, curEnd));
-
-      const rec = monthTx
-        .filter((t) => entradaFinanceiraConfirmada(t))
-        .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
-
-      const des = monthTx
-        .filter((t) => normalizeMovimentoTipo(t.tipo) === 'saida')
-        .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
-
-      const prevRec = transactions
-        .filter((t) => inMonth(t, prevStart, prevEnd) && entradaFinanceiraConfirmada(t))
-        .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
-
-      let growthPct: number | null = null;
-      if (prevRec > 0) {
-        growthPct = Math.round(((rec - prevRec) / prevRec) * 100);
-      } else if (rec > 0) {
-        growthPct = 100;
-      } else {
-        growthPct = null;
-      }
-
-      const lucro = rec - des;
-      let marginPct: number | null = null;
-      if (rec > 0) {
-        marginPct = Math.round((lucro / rec) * 100);
-      } else if (rec === 0 && des === 0) {
-        marginPct = null;
-      } else {
-        marginPct = null;
-      }
-
-      const hasData = rec > 0 || des > 0;
-      setHasMonthFinanceData(hasData);
-
-      setStats({
-        totalReceita: rec,
-        totalDespesa: des,
-        lucroLiquido: lucro,
-        growthPct,
-        marginPct,
-      });
-
-      const daysCur = eachDayOfInterval({ start: curStart, end: curEnd });
-      const receitaPorDia: Record<string, number> = {};
-      monthTx.forEach((t) => {
-        if (!entradaFinanceiraConfirmada(t)) return;
-        const d = parseFinanceiroDate(typeof t.data === 'string' ? t.data : t.created_at);
-        if (!d) return;
-        const key = format(d, 'yyyy-MM-dd');
-        receitaPorDia[key] = (receitaPorDia[key] || 0) + (Number(t.valor) || 0);
-      });
-      let cum = 0;
-      const series = daysCur.map((day) => {
-        cum += receitaPorDia[format(day, 'yyyy-MM-dd')] || 0;
-        return { val: cum };
-      });
-      setChartData(series.length > 0 ? series : [{ val: 0 }]);
     } catch (e) {
       console.error('Error fetching dashboard data:', e);
+      setTransactions([]);
     }
   }, [user, tenantId, userRole]);
 
