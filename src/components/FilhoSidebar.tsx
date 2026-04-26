@@ -5,6 +5,8 @@ import {
   BookOpen, 
   DollarSign, 
   LogOut,
+  Smartphone,
+  Download,
   User as UserIcon,
   CreditCard,
   X,
@@ -13,6 +15,7 @@ import {
 import { cn } from '../lib/utils';
 import { supabase } from '../lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
+import { usePwaInstall } from '../contexts/PwaInstallContext';
 
 interface FilhoSidebarProps {
   activeTab: string;
@@ -33,6 +36,8 @@ export default function FilhoSidebar({
   isMobileOpen = false,
   setIsMobileOpen,
 }: FilhoSidebarProps) {
+  const { canPromptInstall, promptInstall } = usePwaInstall();
+
   const menuItems = [
     { id: 'profile', label: 'Meu Perfil', icon: UserIcon },
     { id: 'financial', label: 'Mensalidade', icon: CreditCard },
@@ -108,7 +113,23 @@ export default function FilhoSidebar({
         </div>
       </div>
 
-      <div className="pt-6 border-t border-white/5">
+      <div className="pt-6 border-t border-white/5 space-y-2">
+        {canPromptInstall && (
+          <button
+            type="button"
+            onClick={() => {
+              void promptInstall();
+              setIsMobileOpen?.(false);
+            }}
+            className="w-full flex items-center gap-4 px-6 py-4 rounded-2xl font-bold text-emerald-100 bg-emerald-500/20 border-2 border-emerald-400/50 shadow-[0_0_18px_rgba(16,185,129,0.12)] hover:bg-emerald-500/30 transition-all"
+          >
+            <span className="flex items-center gap-1.5">
+              <Smartphone className="w-5 h-5 shrink-0 text-emerald-300" />
+              <Download className="w-4 h-4 shrink-0 text-emerald-400/90" />
+            </span>
+            <span className="text-[11px] uppercase font-black tracking-[0.15em]">Instalar Aplicativo</span>
+          </button>
+        )}
         <button
           onClick={handleLogout}
           className="w-full flex items-center gap-4 px-6 py-4 text-gray-500 hover:text-red-500 transition-all group rounded-2xl hover:bg-red-500/5"

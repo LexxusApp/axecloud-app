@@ -29,7 +29,7 @@ import Paywall from './components/Paywall';
 import Subscription from './views/Subscription';
 import { useWebPush } from './hooks/useWebPush';
 import { APP_VERSION } from './config/version';
-import { InstallBanner } from './components/InstallBanner';
+import { PwaInstallTopbarButton } from './components/PwaInstallTopbarButton';
 
 const SYSTEM_VERSION = APP_VERSION; // force logout on update
 
@@ -695,7 +695,6 @@ export default function App() {
         "flex min-w-0 flex-1 flex-col h-[100dvh] relative z-10",
         userRole === 'filho' ? "lg:pl-64" : "lg:pl-56"
       )}>
-        <InstallBanner />
         {/* Mobile Header */}
         <header className="sticky top-0 z-50 flex h-20 min-w-0 shrink-0 items-center justify-between border-b border-white/5 bg-black/40 px-4 backdrop-blur-xl sm:px-6 lg:hidden">
           {userRole === 'filho' ? (
@@ -727,6 +726,7 @@ export default function App() {
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
+                <PwaInstallTopbarButton />
                 <NotificationPanel tenantData={tenantData} systemVersion={SYSTEM_VERSION} userRole={userRole} userId={session?.user?.id} />
                 <button
                   onClick={() => setIsMobileOpen(true)}
@@ -778,6 +778,7 @@ export default function App() {
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1">
+                <PwaInstallTopbarButton />
                 <NotificationPanel tenantData={tenantData} systemVersion={SYSTEM_VERSION} userRole={userRole} userId={session?.user?.id} />
                 <button 
                   onClick={() => setIsMobileOpen(true)}
