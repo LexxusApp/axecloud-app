@@ -155,7 +155,55 @@ export default function MensalidadeFilho({ user, tenantData, setActiveTab }: Men
         setPixFetched(true);
       }
 
-      setMensalidades([]);
+      let mensalidadesList: any[] = [];
+      try {
+        if (childData?.id) {
+          const txRes = await fetch(
+            `/api/transactions?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(userId)}&userRole=filho&limit=150`
+          );
+          if (txRes.ok) {
+            const { data: txRaw } = await txRes.json();
+            const txs = (txRaw || []) as any[];
+            const now = new Date();
+            const y = now.getFullYear();
+            const mo = now.getMonth();
+            const paidThisMonth = txs.some((t) => {
+              if (String(t.tipo || '').toLowerCase() !== 'entrada') return false;
+              if (String(t.categoria || '') !== 'Mensalidade') return false;
+              const d = new Date(t.data);
+              if (d.getFullYear() !== y || d.getMonth() !== mo) return false;
+              if (t.filho_id === childData.id) return true;
+              return new RegExp(`\\(ID:${childData.id}\\)`).test(String(t.descricao || ''));
+            });
+            if (paidThisMonth) {
+              snapPending = null;
+              setPendingMensalidade(null);
+            }
+            mensalidadesList = txs
+              .filter(
+                (t) =>
+                  String(t.tipo || '').toLowerCase() === 'entrada' &&
+                  String(t.categoria || '') === 'Mensalidade'
+              )
+              .sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime())
+              .map((t) => ({
+                id: t.id,
+                descricao: t.descricao || 'Mensalidade',
+                valor: Number(t.valor) || 0,
+                data: t.data,
+                status: 'pago',
+              }));
+            setMensalidades(mensalidadesList);
+          } else {
+            setMensalidades([]);
+          }
+        } else {
+          setMensalidades([]);
+        }
+      } catch (e) {
+        console.warn('MensalidadeFilho: histórico financeiro', e);
+        setMensalidades([]);
+      }
 
       writeStaleCache(cacheKey, {
         filho: childData,
@@ -164,7 +212,7 @@ export default function MensalidadeFilho({ user, tenantData, setActiveTab }: Men
         diaVencimento: snapDia,
         pixConfig: snapPix,
         pixFetched: true,
-        mensalidades: [] as any[],
+        mensalidades: mensalidadesList,
       });
     } catch (error) {
       console.error('Erro ao carregar mensalidade do filho:', error);

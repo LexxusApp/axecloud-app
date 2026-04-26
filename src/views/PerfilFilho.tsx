@@ -228,12 +228,45 @@ export default function PerfilFilho({ user, tenantData, setActiveTab }: PerfilFi
     };
   }, [user.id, user.email]);
 
-  // 2. Status da mensalidade — tabela financeiro não tem coluna filho_id/status;
-  //    débito é considerado em dia por padrão até integração de mensalidades.
+  // 2. Mensalidade do mês: entrada "Mensalidade" no financeiro (filho_id ou ID na descrição).
   useEffect(() => {
-    setLoadingDebt(false);
-    setHasDebt(false);
-  }, [filho?.id]);
+    if (!filho?.id || !tenantId) {
+      setLoadingDebt(false);
+      setHasDebt(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setLoadingDebt(true);
+      try {
+        const res = await fetch(
+          `/api/transactions?tenantId=${encodeURIComponent(tenantId)}&userId=${encodeURIComponent(user.id)}&userRole=filho&limit=150`
+        );
+        if (!res.ok) throw new Error('tx');
+        const { data } = await res.json();
+        const txs = (data || []) as any[];
+        const now = new Date();
+        const y = now.getFullYear();
+        const mo = now.getMonth();
+        const paid = txs.some((t) => {
+          if (String(t.tipo || '').toLowerCase() !== 'entrada') return false;
+          if (String(t.categoria || '') !== 'Mensalidade') return false;
+          const d = new Date(t.data);
+          if (d.getFullYear() !== y || d.getMonth() !== mo) return false;
+          if (t.filho_id === filho.id) return true;
+          return new RegExp(`\\(ID:${filho.id}\\)`).test(String(t.descricao || ''));
+        });
+        if (!cancelled) setHasDebt(!paid);
+      } catch {
+        if (!cancelled) setHasDebt(false);
+      } finally {
+        if (!cancelled) setLoadingDebt(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [filho?.id, tenantId, user.id]);
 
   // 3. Mural — feed central (estilo rede social)
   useEffect(() => {

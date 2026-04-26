@@ -10,6 +10,23 @@ import PageHeader from '../components/PageHeader';
 import { hasPlanAccess } from '../constants/plans';
 import { computeProximaDataMensalidadePrevisao } from '../lib/mensalidadeDueDate';
 
+const FINANCE_UPDATED_EVENT = 'axecloud:finance-updated';
+
+function derivePaidChildIdsForMonth(transactions: Transaction[], ref: Date = new Date()): Set<string> {
+  const y = ref.getFullYear();
+  const m = ref.getMonth();
+  const paid = new Set<string>();
+  for (const t of transactions) {
+    if (t.tipo !== 'entrada' || t.categoria !== 'Mensalidade') continue;
+    const d = new Date(t.data);
+    if (d.getFullYear() !== y || d.getMonth() !== m) continue;
+    if (t.filho_id) paid.add(t.filho_id);
+    const match = (t.descricao || '').match(/\(ID:([^)]+)\)/);
+    if (match) paid.add(match[1]);
+  }
+  return paid;
+}
+
 interface Transaction {
   id: string;
   tipo: 'entrada' | 'saida';
@@ -112,6 +129,20 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
       console.error('Error fetching pix config:', error);
     }
 
+    let txs: Transaction[] = [];
+    try {
+      const txRes = await fetch(
+        `/api/transactions?tenantId=${encodeURIComponent(tenantId || '')}&userId=${encodeURIComponent(userId || '')}&userRole=${encodeURIComponent(userRole || 'admin')}&limit=300`
+      );
+      if (txRes.ok) {
+        const body = await txRes.json();
+        txs = (body.data || []).map((t: any) => ({ ...t, valor: Number(t.valor) || 0 }));
+      }
+    } catch (e) {
+      console.warn('fetchMensalidadesGrid: transações para marcar pagos', e);
+    }
+    const paidThisMonth = derivePaidChildIdsForMonth(txs, new Date());
+
     try {
       let query = supabase.from('filhos_de_santo').select('id, nome, created_at, data_entrada');
       if (tenantId) query = query.eq('tenant_id', tenantId);
@@ -124,8 +155,13 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
         rows.forEach((child: { id: string; created_at?: string; data_entrada?: string }) => {
           const existing = prev[child.id];
           const inc = child.data_entrada || child.created_at;
-          if (existing?.pago) {
-            next[child.id] = { ...existing };
+          const paid = paidThisMonth.has(child.id) || existing?.pago;
+          if (paid) {
+            next[child.id] = {
+              valor: existing?.valor ?? valorPadrao,
+              data: existing?.data ?? computeProximaDataMensalidadePrevisao(inc, dia),
+              pago: true,
+            };
           } else {
             next[child.id] = {
               valor: valorPadrao,
@@ -335,39 +371,38 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
     if (!state || state.pago) return;
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Usuário não autenticado');
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Sessão inválida');
+      if (!tenantId) throw new Error('Terreiro não identificado');
 
-      const insertData: any = {
-        tipo: 'entrada',
-        valor: parseFloat(state.valor) || 0,
-        categoria: 'Mensalidade',
-        data: state.data,
-        descricao: `Mensalidade - ${nome}`,
-        lider_id: user.id,
-        tenant_id: tenantId
-      };
+      const res = await fetch('/api/v1/financial/confirm-mensalidade', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          filho_id: childId,
+          filho_nome: nome,
+          valor: parseFloat(state.valor) || 0,
+          competencia_date: state.data,
+          tenant_id: tenantId,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || 'Falha ao confirmar pagamento');
 
-      // Tenta adicionar filho_id se a coluna puder existir (previne erro PGRST204)
-      // Como não temos como saber se a coluna existe sem uma query, 
-      // e o Supabase falha na query inteira se uma coluna faltar,
-      // usaremos a descrição para guardar o ID do filho por enquanto como backup.
-      insertData.descricao = `Mensalidade - ${nome} (ID:${childId})`;
-
-      const { error } = await supabase
-        .from('financeiro')
-        .insert([insertData]);
-
-      if (error) throw error;
-      
-      setMensalidadesState(prev => ({
+      setMensalidadesState((prev) => ({
         ...prev,
-        [childId]: { ...prev[childId], pago: true }
+        [childId]: { ...prev[childId], pago: true },
       }));
-      fetchTransactions();
-    } catch (error) {
+      await fetchTransactions();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
+      }
+    } catch (error: any) {
       console.error('Error registering mensalidade:', error);
-      alert('Erro ao registrar pagamento.');
+      alert(error?.message || 'Erro ao registrar pagamento.');
     }
   }
 
@@ -414,7 +449,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
   async function fetchTransactions() {
     setLoading(true);
     try {
-      const response = await fetch(`/api/transactions?tenantId=${tenantId || ''}&userId=${userId || ''}&userRole=${userRole || ''}&limit=50`);
+      const response = await fetch(`/api/transactions?tenantId=${tenantId || ''}&userId=${userId || ''}&userRole=${userRole || ''}&limit=200`);
       if (!response.ok) throw new Error('Failed to fetch transactions');
       const { data } = await response.json();
       setTransactions((data || []).map((t: any) => ({
@@ -491,7 +526,12 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
   }
 
   const stats = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
     return transactions.reduce((acc, curr) => {
+      const d = new Date(curr.data);
+      if (d.getFullYear() !== y || d.getMonth() !== m) return acc;
       const valor = Number(curr.valor) || 0;
       if (curr.tipo === 'entrada') acc.entradas += valor;
       else acc.saidas += valor;
@@ -501,13 +541,28 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
 
   const saldo = useMemo(() => stats.entradas - stats.saidas, [stats]);
 
-  // Prepare chart data (last 6 transactions for now as a simple trend)
+  /** Entradas do mês calendário atual, agregadas por dia (pagamentos do mês). */
   const chartData = useMemo(() => {
-    return transactions.slice(0, 6).reverse().map(t => ({
-      name: new Date(t.data).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
-      value: Number(t.valor) || 0,
-      tipo: t.tipo
-    }));
+    const now = new Date();
+    const y = now.getFullYear();
+    const mo = now.getMonth();
+    const entradas = transactions.filter((t) => {
+      if (t.tipo !== 'entrada') return false;
+      const d = new Date(t.data);
+      return d.getFullYear() === y && d.getMonth() === mo;
+    });
+    const byDay: Record<string, number> = {};
+    for (const t of entradas) {
+      const key = String(t.data).slice(0, 10);
+      byDay[key] = (byDay[key] || 0) + (Number(t.valor) || 0);
+    }
+    return Object.entries(byDay)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, value]) => ({
+        name: new Date(`${date}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
+        value,
+        tipo: 'entrada' as const,
+      }));
   }, [transactions]);
 
   if (loading && transactions.length === 0) {

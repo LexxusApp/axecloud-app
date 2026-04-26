@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import NotificationPanel from '../components/NotificationPanel';
 import {
   Plus,
@@ -99,145 +99,165 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
     return { days, monthTitle, anchor };
   }, []);
 
-  useEffect(() => {
-    async function fetchDashboardData() {
-      try {
-        if (!user) return;
+  const fetchDashboardData = useCallback(async () => {
+    try {
+      if (!user) return;
 
-        let lojaTenantPk: string | null = null;
-        if (userRole !== 'filho') {
-          const seed = tenantId || user.id;
-          const { data: plRow } = await supabase
-            .from('perfil_lider')
-            .select('id')
-            .or(`id.eq.${seed},tenant_id.eq.${seed}`)
-            .maybeSingle();
-          lojaTenantPk = plRow?.id || seed;
-        }
-
-        const [childrenRes, transactionsRes, lojaRes] = await Promise.all([
-          fetch(`/api/children?userId=${user.id}&tenantId=${tenantId || user.id}`).then((r) => r.json()),
-          fetch(`/api/transactions?tenantId=${tenantId || user.id}&userId=${user.id}&userRole=${userRole || ''}`).then((r) => r.json()),
-          userRole !== 'filho' && lojaTenantPk
-            ? supabase
-                .from('loja_pedidos')
-                .select('*')
-                .eq('tenant_id', lojaTenantPk)
-                .order('created_at', { ascending: false })
-                .limit(12)
-            : Promise.resolve({ data: [], error: null } as { data: any[]; error: any }),
-        ]);
-
-        const children = (childrenRes.data || []).filter((c: any) => c.status === 'Ativo');
-        setChildrenData(children.slice(0, 4));
-
-        const transactions = (transactionsRes.data || []) as any[];
-        const lojaRows = (lojaRes.data || []) as any[];
-
-        const lojaHistorico = lojaRows.map((p) => {
-          const acao = p.tipo === 'reserva' ? 'reservou na loja' : 'comprou na loja';
-          const met =
-            p.metodo_pagamento === 'mensalidade'
-              ? 'mensalidade'
-              : p.metodo_pagamento === 'pix'
-                ? 'PIX'
-                : p.metodo_pagamento === 'reserva'
-                  ? 'reserva'
-                  : String(p.metodo_pagamento || '');
-          return {
-            tipo: 'entrada',
-            descricao: `${p.filho_nome || 'Filho de santo'} ${acao} (${met}): ${p.resumo_itens || ''}`,
-            valor: Number(p.valor_total) || 0,
-            data: p.created_at,
-          };
-        });
-
-        const merged = [...transactions, ...lojaHistorico].sort(
-          (a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()
-        );
-        setHistoryData(merged.slice(0, 8));
-
-        const anchor = new Date();
-        const curStart = startOfMonth(anchor);
-        const curEnd = endOfMonth(anchor);
-        const prevMonthRef = subMonths(anchor, 1);
-        const prevStart = startOfMonth(prevMonthRef);
-        const prevEnd = endOfMonth(prevMonthRef);
-
-        const inMonth = (t: any, start: Date, end: Date) => {
-          const d = parseFinanceiroDate(typeof t.data === 'string' ? t.data : t.created_at);
-          if (!d) return false;
-          return isWithinInterval(d, { start, end });
-        };
-
-        const monthTx = transactions.filter((t) => inMonth(t, curStart, curEnd));
-
-        const rec = monthTx
-          .filter((t) => entradaFinanceiraConfirmada(t))
-          .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
-
-        const des = monthTx
-          .filter((t) => normalizeMovimentoTipo(t.tipo) === 'saida')
-          .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
-
-        const prevRec = transactions
-          .filter((t) => inMonth(t, prevStart, prevEnd) && entradaFinanceiraConfirmada(t))
-          .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
-
-        let growthPct: number | null = null;
-        if (prevRec > 0) {
-          growthPct = Math.round(((rec - prevRec) / prevRec) * 100);
-        } else if (rec > 0) {
-          growthPct = 100;
-        } else {
-          growthPct = null;
-        }
-
-        const lucro = rec - des;
-        let marginPct: number | null = null;
-        if (rec > 0) {
-          marginPct = Math.round((lucro / rec) * 100);
-        } else if (rec === 0 && des === 0) {
-          marginPct = null;
-        } else {
-          marginPct = null;
-        }
-
-        const hasData = rec > 0 || des > 0;
-        setHasMonthFinanceData(hasData);
-
-        setStats({
-          totalReceita: rec,
-          totalDespesa: des,
-          lucroLiquido: lucro,
-          growthPct,
-          marginPct,
-        });
-
-        const daysCur = eachDayOfInterval({ start: curStart, end: curEnd });
-        const receitaPorDia: Record<string, number> = {};
-        monthTx.forEach((t) => {
-          if (!entradaFinanceiraConfirmada(t)) return;
-          const d = parseFinanceiroDate(typeof t.data === 'string' ? t.data : t.created_at);
-          if (!d) return;
-          const key = format(d, 'yyyy-MM-dd');
-          receitaPorDia[key] = (receitaPorDia[key] || 0) + (Number(t.valor) || 0);
-        });
-        let cum = 0;
-        const series = daysCur.map((day) => {
-          cum += receitaPorDia[format(day, 'yyyy-MM-dd')] || 0;
-          return { val: cum };
-        });
-        setChartData(series.length > 0 ? series : [{ val: 0 }]);
-
-      } catch (e) {
-        console.error('Error fetching dashboard data:', e);
-      } finally {
-        setLoading(false);
+      let lojaTenantPk: string | null = null;
+      if (userRole !== 'filho') {
+        const seed = tenantId || user.id;
+        const { data: plRow } = await supabase
+          .from('perfil_lider')
+          .select('id')
+          .or(`id.eq.${seed},tenant_id.eq.${seed}`)
+          .maybeSingle();
+        lojaTenantPk = plRow?.id || seed;
       }
+
+      const txUrl = `/api/transactions?tenantId=${encodeURIComponent(String(tenantId || user.id))}&userId=${encodeURIComponent(user.id)}&userRole=${encodeURIComponent(userRole || '')}&limit=400`;
+
+      const [childrenRes, transactionsRes, lojaRes] = await Promise.all([
+        fetch(`/api/children?userId=${user.id}&tenantId=${tenantId || user.id}`).then((r) => r.json()),
+        fetch(txUrl).then((r) => r.json()),
+        userRole !== 'filho' && lojaTenantPk
+          ? supabase
+              .from('loja_pedidos')
+              .select('*')
+              .eq('tenant_id', lojaTenantPk)
+              .order('created_at', { ascending: false })
+              .limit(12)
+          : Promise.resolve({ data: [], error: null } as { data: any[]; error: any }),
+      ]);
+
+      const children = (childrenRes.data || []).filter((c: any) => c.status === 'Ativo');
+      setChildrenData(children.slice(0, 4));
+
+      const transactions = (transactionsRes.data || []) as any[];
+      const lojaRows = (lojaRes.data || []) as any[];
+
+      const lojaHistorico = lojaRows.map((p) => {
+        const acao = p.tipo === 'reserva' ? 'reservou na loja' : 'comprou na loja';
+        const met =
+          p.metodo_pagamento === 'mensalidade'
+            ? 'mensalidade'
+            : p.metodo_pagamento === 'pix'
+              ? 'PIX'
+              : p.metodo_pagamento === 'reserva'
+                ? 'reserva'
+                : String(p.metodo_pagamento || '');
+        return {
+          tipo: 'entrada',
+          descricao: `${p.filho_nome || 'Filho de santo'} ${acao} (${met}): ${p.resumo_itens || ''}`,
+          valor: Number(p.valor_total) || 0,
+          data: p.created_at,
+        };
+      });
+
+      const merged = [...transactions, ...lojaHistorico].sort(
+        (a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()
+      );
+      setHistoryData(merged.slice(0, 8));
+
+      const anchor = new Date();
+      const curStart = startOfMonth(anchor);
+      const curEnd = endOfMonth(anchor);
+      const prevMonthRef = subMonths(anchor, 1);
+      const prevStart = startOfMonth(prevMonthRef);
+      const prevEnd = endOfMonth(prevMonthRef);
+
+      const inMonth = (t: any, start: Date, end: Date) => {
+        const d = parseFinanceiroDate(typeof t.data === 'string' ? t.data : t.created_at);
+        if (!d) return false;
+        return isWithinInterval(d, { start, end });
+      };
+
+      const monthTx = transactions.filter((t) => inMonth(t, curStart, curEnd));
+
+      const rec = monthTx
+        .filter((t) => entradaFinanceiraConfirmada(t))
+        .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
+
+      const des = monthTx
+        .filter((t) => normalizeMovimentoTipo(t.tipo) === 'saida')
+        .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
+
+      const prevRec = transactions
+        .filter((t) => inMonth(t, prevStart, prevEnd) && entradaFinanceiraConfirmada(t))
+        .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
+
+      let growthPct: number | null = null;
+      if (prevRec > 0) {
+        growthPct = Math.round(((rec - prevRec) / prevRec) * 100);
+      } else if (rec > 0) {
+        growthPct = 100;
+      } else {
+        growthPct = null;
+      }
+
+      const lucro = rec - des;
+      let marginPct: number | null = null;
+      if (rec > 0) {
+        marginPct = Math.round((lucro / rec) * 100);
+      } else if (rec === 0 && des === 0) {
+        marginPct = null;
+      } else {
+        marginPct = null;
+      }
+
+      const hasData = rec > 0 || des > 0;
+      setHasMonthFinanceData(hasData);
+
+      setStats({
+        totalReceita: rec,
+        totalDespesa: des,
+        lucroLiquido: lucro,
+        growthPct,
+        marginPct,
+      });
+
+      const daysCur = eachDayOfInterval({ start: curStart, end: curEnd });
+      const receitaPorDia: Record<string, number> = {};
+      monthTx.forEach((t) => {
+        if (!entradaFinanceiraConfirmada(t)) return;
+        const d = parseFinanceiroDate(typeof t.data === 'string' ? t.data : t.created_at);
+        if (!d) return;
+        const key = format(d, 'yyyy-MM-dd');
+        receitaPorDia[key] = (receitaPorDia[key] || 0) + (Number(t.valor) || 0);
+      });
+      let cum = 0;
+      const series = daysCur.map((day) => {
+        cum += receitaPorDia[format(day, 'yyyy-MM-dd')] || 0;
+        return { val: cum };
+      });
+      setChartData(series.length > 0 ? series : [{ val: 0 }]);
+    } catch (e) {
+      console.error('Error fetching dashboard data:', e);
     }
-    if (user) fetchDashboardData();
   }, [user, tenantId, userRole]);
+
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
+    setLoading(true);
+    void (async () => {
+      try {
+        await fetchDashboardData();
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [user, fetchDashboardData]);
+
+  useEffect(() => {
+    const onFinanceUpdated = () => {
+      void fetchDashboardData();
+    };
+    window.addEventListener('axecloud:finance-updated', onFinanceUpdated);
+    return () => window.removeEventListener('axecloud:finance-updated', onFinanceUpdated);
+  }, [fetchDashboardData]);
 
   if (loading) return <div className="h-[70vh] flex items-center justify-center"><LuxuryLoading /></div>;
 

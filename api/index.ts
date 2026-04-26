@@ -774,6 +774,88 @@ async function startServer() {
     }
   });
 
+  app.post("/api/v1/financial/confirm-mensalidade", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Não autorizado" });
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Token inválido" });
+
+      const { filho_id, filho_nome, valor, competencia_date, tenant_id } = req.body || {};
+      if (!filho_id || !tenant_id) {
+        return res.status(400).json({ error: "filho_id e tenant_id são obrigatórios" });
+      }
+      const v = Number(valor);
+      if (!Number.isFinite(v) || v <= 0) {
+        return res.status(400).json({ error: "valor inválido" });
+      }
+
+      const { data: child, error: childErr } = await supabaseAdmin
+        .from("filhos_de_santo")
+        .select("id, nome, tenant_id, lider_id")
+        .eq("id", filho_id)
+        .maybeSingle();
+      if (childErr || !child) {
+        return res.status(404).json({ error: "Filho não encontrado" });
+      }
+
+      const resolvedTenant = await resolveLeaderId(tenant_id as string);
+      const sameHouse =
+        child.tenant_id === tenant_id ||
+        child.tenant_id === resolvedTenant ||
+        child.lider_id === user.id ||
+        child.lider_id === tenant_id ||
+        child.lider_id === resolvedTenant;
+      if (!sameHouse) {
+        return res.status(403).json({ error: "Sem permissão para confirmar este pagamento" });
+      }
+
+      const paymentDate = new Date().toISOString().split("T")[0];
+      const compDate = (competencia_date && String(competencia_date).trim()) || paymentDate;
+      const nome = (filho_nome && String(filho_nome).trim()) || child.nome || "Filho";
+
+      const rpcArgs = {
+        p_filho_id: filho_id,
+        p_filho_nome: nome,
+        p_valor: v,
+        p_competencia_date: compDate,
+        p_payment_date: paymentDate,
+        p_tenant_id: tenant_id,
+        p_lider_id: user.id,
+      };
+
+      const { data: rpcId, error: rpcErr } = await supabaseAdmin.rpc("confirm_mensalidade_payment", rpcArgs);
+      if (!rpcErr && rpcId) {
+        return res.json({ success: true, id: rpcId, via: "rpc" });
+      }
+      if (rpcErr) {
+        console.warn("[SERVER] RPC confirm_mensalidade_payment indisponível — fallback:", rpcErr.message || rpcErr);
+      }
+
+      const row: Record<string, unknown> = {
+        tipo: "entrada",
+        valor: v,
+        categoria: "Mensalidade",
+        data: paymentDate,
+        descricao: `Mensalidade - ${nome} (competência ${compDate}) (ID:${filho_id})`,
+        tenant_id,
+        lider_id: user.id,
+        filho_id,
+      };
+
+      const { data: inserted, error: insErr } = await supabaseAdmin.from("financeiro").insert([row]).select("id").single();
+      if (insErr) {
+        console.error("[SERVER] confirm-mensalidade fallback insert:", insErr);
+        return res.status(500).json({ error: insErr.message || "Falha ao registrar pagamento" });
+      }
+      return res.json({ success: true, id: inserted?.id, via: "insert" });
+    } catch (err: any) {
+      console.error("[SERVER] confirm-mensalidade:", err?.message || err);
+      res.status(500).json({ error: err?.message || "Erro interno" });
+    }
+  });
+
   // API Route: Get Library Materials (bypasses RLS — filhos podem ler materiais do zelador)
   app.get("/api/v1/library/materials", async (req, res) => {
     const { tenantId } = req.query;
@@ -1782,10 +1864,16 @@ async function startServer() {
           .from('filhos_de_santo')
           .select('id')
           .eq('user_id', userId)
-          .single();
+          .maybeSingle();
         
         if (childData) {
-          query = query.eq('filho_id', childData.id);
+          const fid = childData.id;
+          const { error: checkColError } = await supabaseAdmin.from('financeiro').select('filho_id').limit(1);
+          if (!checkColError) {
+            query = query.or(`filho_id.eq.${fid},and(categoria.eq.Mensalidade,descricao.ilike.%(ID:${fid})%)`);
+          } else {
+            query = query.ilike('descricao', `% (ID:${fid})%`);
+          }
         } else {
           return res.json({ data: [] });
         }
