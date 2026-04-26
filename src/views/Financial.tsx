@@ -451,8 +451,8 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
     }
   }
 
-  async function fetchTransactions() {
-    setLoading(true);
+  async function fetchTransactions(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true);
     try {
       const response = await fetch(`/api/transactions?tenantId=${tenantId || ''}&userId=${userId || ''}&userRole=${userRole || ''}&limit=200`);
       if (!response.ok) throw new Error('Failed to fetch transactions');
@@ -464,7 +464,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
     } catch (error) {
       console.error('Error fetching transactions:', error);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }
 
@@ -515,18 +515,49 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
 
   async function handleDelete(id: string) {
     if (!confirm('Deseja realmente excluir este lançamento? Esta ação não pode ser desfeita.')) return;
-    
-    try {
-      const { error } = await supabase
-        .from('financeiro')
-        .delete()
-        .eq('id', id);
 
-      if (error) throw error;
-      fetchTransactions();
-    } catch (error) {
-      console.error('Error deleting transaction:', error);
-      alert('Erro ao excluir lançamento.');
+    const backup = transactions;
+    setTransactions((prev) => prev.filter((t) => t.id !== id));
+    window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error('Sessão expirada. Faça login novamente.');
+      }
+      const res = await fetch(`/api/transactions/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      let body: Record<string, unknown> = {};
+      try {
+        body = (await res.json()) as Record<string, unknown>;
+      } catch {
+        /* resposta vazia */
+      }
+      if (!res.ok) {
+        console.error('[Financial] Exclusão do lançamento falhou (resposta do servidor):', {
+          id,
+          httpStatus: res.status,
+          payload: body,
+          mensagem: body?.error || body?.message,
+        });
+        throw new Error(String(body?.error || body?.message || `Erro HTTP ${res.status}`));
+      }
+      await fetchTransactions({ silent: true });
+      window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
+    } catch (error: unknown) {
+      const err = error as { message?: string; name?: string; stack?: string };
+      console.error('[Financial] Erro ao excluir lançamento:', {
+        id,
+        message: err?.message,
+        name: err?.name,
+        stack: err?.stack,
+        error,
+      });
+      setTransactions(backup);
+      window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
+      alert(err?.message || 'Erro ao excluir lançamento.');
     }
   }
 
@@ -820,6 +851,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
                       <MessageCircle className="w-4 h-4" />
                     </button>
                   )}
+                  {isAdmin && (
                   <button 
                     onClick={() => handleDelete(t.id)}
                     className="opacity-0 group-hover:opacity-100 p-2 text-gray-500 hover:text-red-500 transition-all"
@@ -827,6 +859,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
                   >
                     <X className="w-4 h-4" />
                   </button>
+                  )}
                 </div>
               </div>
             ))}

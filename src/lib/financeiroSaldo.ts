@@ -50,7 +50,9 @@ export function countsTowardSaldo(t: { status?: string | null }): boolean {
     s === 'cancelado' ||
     s === 'cancelada' ||
     s === 'rejeitado' ||
-    s === 'rejeitada'
+    s === 'rejeitada' ||
+    s === 'excluido' ||
+    s === 'excluído'
   ) {
     return false;
   }

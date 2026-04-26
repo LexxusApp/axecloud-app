@@ -2360,9 +2360,104 @@ async function startServer() {
 
       const { data, error } = await query;
       if (error) throw error;
-      res.json({ data });
+      const filtered = (data || []).filter(
+        (r: any) => String(r?.status || "").toLowerCase() !== "excluido"
+      );
+      res.json({ data: filtered });
     } catch (error: any) {
       console.error("[SERVER] Error fetching transactions:", error.message || error);
+      res.status(500).json({ error: error.message || "Internal Server Error" });
+    }
+  });
+
+  function isFinanceiroFkDeleteError(err: any): boolean {
+    const code = String(err?.code || "");
+    const msg = String(err?.message || err || "");
+    return code === "23503" || /foreign key|violates foreign key constraint/i.test(msg);
+  }
+
+  async function userMayDeleteFinanceiroRow(user: { id: string; user_metadata?: Record<string, unknown> }, row: any) {
+    const role = String(user.user_metadata?.role || "").toLowerCase();
+    if (role === "filho") {
+      const { data: child } = await supabaseAdmin
+        .from("filhos_de_santo")
+        .select("id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!child?.id) return false;
+      if (row.filho_id === child.id) return true;
+      const m = String(row.descricao || "").match(/\(ID:([^)]+)\)/);
+      return !!(m && m[1] === child.id);
+    }
+    const { data: profile } = await supabaseAdmin
+      .from("perfil_lider")
+      .select("id, tenant_id")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (!profile) return false;
+    const house = profile.tenant_id || profile.id;
+    const resolvedHouse = await resolveLeaderId(String(house));
+    const candidates = new Set(
+      [user.id, profile.id, profile.tenant_id, house, resolvedHouse].filter((x) => typeof x === "string" && x.length > 0)
+    );
+    for (const k of candidates) {
+      if (row.lider_id === k || row.tenant_id === k) return true;
+    }
+    if (row.tenant_id) {
+      const r = await resolveLeaderId(String(row.tenant_id));
+      if (candidates.has(r)) return true;
+    }
+    return false;
+  }
+
+  app.delete("/api/transactions/:id", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Não autorizado" });
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ error: "id obrigatório" });
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) {
+        return res.status(401).json({ error: "Sessão inválida" });
+      }
+      const { data: row, error: fetchErr } = await supabaseAdmin
+        .from("financeiro")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+      if (fetchErr) throw fetchErr;
+      if (!row) return res.status(404).json({ error: "Lançamento não encontrado" });
+      const allowed = await userMayDeleteFinanceiroRow(user, row);
+      if (!allowed) return res.status(403).json({ error: "Sem permissão para excluir este lançamento" });
+
+      const { error: delErr } = await supabaseAdmin.from("financeiro").delete().eq("id", id);
+      if (!delErr) {
+        return res.json({ success: true, mode: "hard" });
+      }
+      if (isFinanceiroFkDeleteError(delErr)) {
+        const { error: softErr } = await supabaseAdmin
+          .from("financeiro")
+          .update({ status: "excluido" })
+          .eq("id", id);
+        if (!softErr) {
+          return res.json({ success: true, mode: "soft", reason: "foreign_key" });
+        }
+        console.error("[SERVER] DELETE financeiro FK fallback (status=excluido) falhou:", {
+          id,
+          deleteError: delErr,
+          softStatusError: softErr,
+        });
+        return res.status(409).json({
+          error:
+            "Não foi possível excluir por vínculo no banco e o soft delete falhou. Confirme a coluna `status` em `financeiro`.",
+          details: String(delErr?.message || delErr),
+        });
+      }
+      console.error("[SERVER] DELETE financeiro:", { id, deleteError: delErr });
+      return res.status(500).json({ error: String(delErr?.message || delErr) });
+    } catch (error: any) {
+      console.error("[SERVER] /api/transactions DELETE:", error?.message || error);
       res.status(500).json({ error: error.message || "Internal Server Error" });
     }
   });
