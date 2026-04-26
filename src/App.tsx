@@ -29,7 +29,12 @@ import Paywall from './components/Paywall';
 import Subscription from './views/Subscription';
 import { useWebPush } from './hooks/useWebPush';
 import { APP_VERSION } from './config/version';
-import { clearCachedTenantIdForUser, writeCachedTenantIdForUser } from './lib/tenantCache';
+import {
+  clearCachedTenantIdForUser,
+  readCachedTenantIdForUser,
+  writeCachedTenantIdForUser,
+} from './lib/tenantCache';
+import { resolveTenantFromSupabase } from './lib/resolveTenantFromSupabase';
 import { PwaInstallTopbarButton } from './components/PwaInstallTopbarButton';
 
 const SYSTEM_VERSION = APP_VERSION; // force logout on update
@@ -403,6 +408,43 @@ export default function App() {
       forceMountAuthenticatedApp(session.user.id, session.user.email, session.user.user_metadata?.role);
     }
   }, [loading, session, userRole]);
+
+  /** Se o tenant não veio do tenant-info/props, tenta perfil_lider / filhos (JWT) e atualiza o estado. */
+  useEffect(() => {
+    if (!session?.user?.id || !tenantData) return;
+    const raw = tenantData.tenant_id;
+    if (String(raw || '').trim()) {
+      console.warn('[TenantContext][App]', {
+        userId: session.user.id,
+        tenant_id: raw,
+        cacheParalelo: readCachedTenantIdForUser(session.user.id) || null,
+      });
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const fallback = await resolveTenantFromSupabase(session.user.id, session.user.email);
+      if (cancelled) return;
+      if (fallback) {
+        writeCachedTenantIdForUser(session.user.id, fallback);
+        setTenantData((prev) => (prev ? { ...prev, tenant_id: fallback } : prev));
+        console.warn('[TenantContext][App]', {
+          userId: session.user.id,
+          tenant_id: fallback,
+          origem: 'supabase_fallback_cliente',
+        });
+      } else {
+        console.warn('[TenantContext][App]', {
+          userId: session.user.id,
+          tenant_id: null,
+          alerta: 'tenant_id continua vazio após login e fallback Supabase — finanças/membros podem zerar',
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, session?.user?.email, tenantData, tenantData?.tenant_id]);
 
   useEffect(() => {
     const handleNavigateToSubscription = () => {

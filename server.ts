@@ -8,6 +8,10 @@ import cors from "cors";
 import geoip from "geoip-lite";
 import webpush from "web-push";
 import * as MensZelador from "./src/lib/mensalidadesZeladorApi.ts";
+import {
+  normalizeQueryTenantId,
+  resolveFinanceiroTenantScope,
+} from "./src/lib/resolveTenantForFinanceiroApi.ts";
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);
@@ -1990,7 +1994,8 @@ async function startServer() {
   app.get("/api/children", async (req, res) => {
     console.log(`[SERVER] GET /api/children request received. Query:`, req.query);
     const userId = req.query.userId as string;
-    const tenantIdFromQuery = req.query.tenantId as string;
+    const tenantIdFromQuery = normalizeQueryTenantId(req.query.tenantId);
+    const userRoleQ = String(req.query.userRole || "");
 
     if (!userId) {
       console.log(`[SERVER] GET /api/children - Missing userId`);
@@ -1998,21 +2003,12 @@ async function startServer() {
     }
 
     try {
-      let tenantId = tenantIdFromQuery;
-
-      // Tenta buscar com tenant_id primeiro, se falhar, busca por lider_id
-      if (!tenantId) {
-        const { data: profile, error: profileError } = await supabaseAdmin
-          .from('perfil_lider')
-          .select('tenant_id')
-          .eq('id', userId)
-          .single();
-          
-        if (profileError) {
-          console.log(`[SERVER] Profile fetch error:`, profileError);
-        }
-        tenantId = profile?.tenant_id;
-      }
+      const tenantId = await resolveFinanceiroTenantScope(
+        supabaseAdmin,
+        userId,
+        userRoleQ,
+        tenantIdFromQuery
+      );
 
       let query = supabaseAdmin.from('filhos_de_santo').select('*').order('nome', { ascending: true });
       
@@ -2413,10 +2409,22 @@ async function startServer() {
   app.get("/api/transactions", async (req, res) => {
     const { tenantId, userId, userRole, limit } = req.query;
     try {
+      const userRoleStr = String(userRole || "").toLowerCase();
+      const tenantIdRaw = normalizeQueryTenantId(tenantId);
+      let effectiveTenant = "";
+      if (userRoleStr !== "filho") {
+        effectiveTenant = await resolveFinanceiroTenantScope(
+          supabaseAdmin,
+          userId as string,
+          userRoleStr,
+          tenantIdRaw
+        );
+      }
+
       let query = supabaseAdmin.from('financeiro').select('*').order('data', { ascending: false });
       
-      if (tenantId) {
-        query = query.or(`tenant_id.eq.${tenantId},lider_id.eq.${tenantId}`);
+      if (userRoleStr !== "filho" && effectiveTenant) {
+        query = query.or(`tenant_id.eq.${effectiveTenant},lider_id.eq.${effectiveTenant}`);
       }
       
       if (userRole === 'filho' && userId) {

@@ -71,7 +71,11 @@ async function fetchDashboardFinanceBundle(
     )}&limit=400`;
 
     const [childrenRes, txRes, lojaRes] = await Promise.all([
-      fetch(`/api/children?userId=${user.id}&tenantId=${tenantIdEfetivo || user.id}`).then((r) => r.json()),
+      fetch(
+        `/api/children?userId=${encodeURIComponent(user.id)}&tenantId=${encodeURIComponent(
+          tenantIdEfetivo || user.id
+        )}&userRole=${encodeURIComponent(userRole || '')}`
+      ).then((r) => r.json()),
       fetch(txUrl).then(async (r) => {
         if (!r.ok) {
           const errText = await r.text().catch(() => '');
