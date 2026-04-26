@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import useSWR from 'swr';
 import { DollarSign, TrendingUp, TrendingDown, PieChart, Download, Plus, ArrowUpRight, ArrowDownRight, CreditCard, Loader2, X, CheckCircle2, MessageCircle, Lock, Smartphone, Bell, Target, Save, Undo2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -14,6 +15,7 @@ import {
   parseFinanceiroDataRef,
 } from '../lib/financeiroSaldo';
 import type { MensalidadeZeladorRow } from '../lib/mensalidadesZeladorApi';
+import { resolveTenantIdForFinance } from '../lib/tenantCache';
 
 const FINANCE_UPDATED_EVENT = 'axecloud:finance-updated';
 
@@ -51,12 +53,14 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
   // Não-filhos são sempre gestores do terreiro (admin, vita, cortesia, premium, oro, axe).
   // O plano controla QUAIS funções de gestão estão disponíveis (via hasPlanAccess), não SE o usuário é gestor.
   const isAdmin = userRole !== 'filho';
-  const tenantId = tenantData?.tenant_id;
+  const tenantId = useMemo(
+    () => resolveTenantIdForFinance(tenantData?.tenant_id, userId),
+    [tenantData?.tenant_id, userId]
+  );
   const plan = tenantData?.plan?.toLowerCase().trim();
   const isAxePlan = plan === 'axe' || plan === 'free';
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [children, setChildren] = useState<any[]>([]);
@@ -98,10 +102,56 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
     filho_id: ''
   });
 
+  const financialTxKey =
+    userId && !(isAxePlan && userRole !== 'filho')
+      ? (['financial-transactions', tenantId, userId, userRole] as const)
+      : null;
+
+  const { data: txJson, isLoading: txLoading, mutate: mutateTransactions } = useSWR(
+    financialTxKey,
+    async ([, tid, uid, role]) => {
+      const response = await fetch(
+        `/api/transactions?tenantId=${encodeURIComponent(tid)}&userId=${encodeURIComponent(uid)}&userRole=${encodeURIComponent(String(role))}&limit=200`
+      );
+      if (!response.ok) throw new Error('Failed to fetch transactions');
+      return response.json() as Promise<{ data?: any[] }>;
+    },
+    { revalidateOnMount: true, revalidateOnFocus: true, dedupingInterval: 0 }
+  );
+
   useEffect(() => {
-    // Filhos de Santo sempre carregam dados, independente do plano do terreiro
+    if (!txJson?.data) return;
+    const rows = (txJson.data || []).map((t: any) => ({
+      ...t,
+      valor: Number(t.valor) || 0,
+    }));
+    setTransactions(rows);
+    let entradas = 0;
+    let saidas = 0;
+    for (const t of rows) {
+      if (!countsTowardSaldo(t)) continue;
+      const v = Number(t.valor) || 0;
+      const mt = normalizeMovimentoTipo(t.tipo);
+      if (mt === 'entrada') entradas += v;
+      else if (mt === 'saida') saidas += v;
+    }
+    const saldoRecuperado = entradas - saidas;
+    console.log('[FinanceDebug][Financial]', {
+      userId,
+      tenantIdEfetivo: tenantId || '(vazio)',
+      tenantIdDasProps:
+        tenantData?.tenant_id != null && String(tenantData.tenant_id).trim() !== ''
+          ? tenantData.tenant_id
+          : '(vazio)',
+      saldoRecuperado,
+      txCount: rows.length,
+    });
+  }, [txJson, userId, tenantId, tenantData?.tenant_id]);
+
+  const loading = Boolean(financialTxKey && txLoading && !txJson);
+
+  useEffect(() => {
     if (isAxePlan && userRole !== 'filho') return;
-    fetchTransactions();
     if (isAdmin) {
       void fetchMensalidadesGrid();
       if (hasCaixinhaAccess) {
@@ -490,20 +540,12 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
     }
   }
 
-  async function fetchTransactions(opts?: { silent?: boolean }) {
-    if (!opts?.silent) setLoading(true);
+  async function fetchTransactions(_opts?: { silent?: boolean }) {
+    if (!financialTxKey) return;
     try {
-      const response = await fetch(`/api/transactions?tenantId=${tenantId || ''}&userId=${userId || ''}&userRole=${userRole || ''}&limit=200`);
-      if (!response.ok) throw new Error('Failed to fetch transactions');
-      const { data } = await response.json();
-      setTransactions((data || []).map((t: any) => ({
-        ...t,
-        valor: Number(t.valor) || 0
-      })));
+      await mutateTransactions();
     } catch (error) {
       console.error('Error fetching transactions:', error);
-    } finally {
-      if (!opts?.silent) setLoading(false);
     }
   }
 

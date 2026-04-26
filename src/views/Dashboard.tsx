@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
+import useSWR from 'swr';
 import NotificationPanel from '../components/NotificationPanel';
 import {
   Plus,
@@ -37,6 +38,116 @@ import {
   normalizeMovimentoTipo,
   parseFinanceiroDataRef,
 } from '../lib/financeiroSaldo';
+import { resolveTenantIdForFinance } from '../lib/tenantCache';
+
+type DashboardBundle = {
+  transactions: any[];
+  childrenData: any[];
+  historyData: any[];
+};
+
+async function fetchDashboardFinanceBundle(
+  user: { id: string },
+  tenantIdEfetivo: string,
+  userRole: string,
+  tenantIdDasProps: string | undefined | null
+): Promise<DashboardBundle> {
+  try {
+    let lojaTenantPk: string | null = null;
+    if (userRole !== 'filho') {
+      const seed = tenantIdEfetivo || user.id;
+      const { data: plRow } = await supabase
+        .from('perfil_lider')
+        .select('id')
+        .or(`id.eq.${seed},tenant_id.eq.${seed}`)
+        .maybeSingle();
+      lojaTenantPk = plRow?.id || seed;
+    }
+
+    const txUrl = `/api/transactions?tenantId=${encodeURIComponent(
+      tenantIdEfetivo || ''
+    )}&userId=${encodeURIComponent(user.id)}&userRole=${encodeURIComponent(
+      userRole || ''
+    )}&limit=400`;
+
+    const [childrenRes, txRes, lojaRes] = await Promise.all([
+      fetch(`/api/children?userId=${user.id}&tenantId=${tenantIdEfetivo || user.id}`).then((r) => r.json()),
+      fetch(txUrl).then(async (r) => {
+        if (!r.ok) {
+          const errText = await r.text().catch(() => '');
+          console.error('[Dashboard] /api/transactions', r.status, errText);
+          return { data: [] as any[] };
+        }
+        return r.json() as Promise<{ data?: any[] }>;
+      }),
+      userRole !== 'filho' && lojaTenantPk
+        ? supabase
+            .from('loja_pedidos')
+            .select('*')
+            .eq('tenant_id', lojaTenantPk)
+            .order('created_at', { ascending: false })
+            .limit(12)
+        : Promise.resolve({ data: [], error: null } as { data: any[]; error: any }),
+    ]);
+
+    const children = (childrenRes.data || []).filter((c: any) => c.status === 'Ativo');
+    const rawTx = (txRes.data || []) as any[];
+    const normalized = rawTx.map((t) => ({ ...t, valor: Number(t.valor) || 0 }));
+
+    const counted = normalized.filter((t) => countsTowardSaldo(t));
+    let rec = 0;
+    let des = 0;
+    for (const t of counted) {
+      const n = Number(t.valor) || 0;
+      const mt = normalizeMovimentoTipo(t.tipo);
+      if (mt === 'entrada') rec += n;
+      else if (mt === 'saida') des += n;
+    }
+    const saldoLiquido = rec - des;
+    console.log('[FinanceDebug][Dashboard]', {
+      userId: user.id,
+      tenantIdEfetivo: tenantIdEfetivo || '(vazio)',
+      tenantIdDasProps: tenantIdDasProps != null && String(tenantIdDasProps).trim() !== '' ? tenantIdDasProps : '(vazio)',
+      usouFallbackLocalStorage:
+        !String(tenantIdDasProps ?? '').trim() && Boolean(String(tenantIdEfetivo || '').trim()),
+      saldoLiquido,
+      txCount: normalized.length,
+    });
+
+    const lojaRows = (lojaRes.data || []) as any[];
+
+    const lojaHistorico = lojaRows.map((p) => {
+      const acao = p.tipo === 'reserva' ? 'reservou na loja' : 'comprou na loja';
+      const met =
+        p.metodo_pagamento === 'mensalidade'
+          ? 'mensalidade'
+          : p.metodo_pagamento === 'pix'
+            ? 'PIX'
+            : p.metodo_pagamento === 'reserva'
+              ? 'reserva'
+              : String(p.metodo_pagamento || '');
+      return {
+        tipo: 'entrada',
+        descricao: `${p.filho_nome || 'Filho de santo'} ${acao} (${met}): ${p.resumo_itens || ''}`,
+        valor: Number(p.valor_total) || 0,
+        data: p.created_at,
+      };
+    });
+
+    const merged = [...normalized, ...lojaHistorico].sort(
+      (a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()
+    );
+
+    return {
+      transactions: normalized,
+      childrenData: children.slice(0, 4),
+      historyData: merged.slice(0, 8),
+    };
+  } catch (e) {
+    console.error('Error fetching dashboard data:', e);
+    return { transactions: [], childrenData: [], historyData: [] };
+  }
+}
 
 interface DashboardProps {
   setActiveTab: (tab: string) => void;
@@ -49,8 +160,10 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ setActiveTab, user, userRole = 'admin', tenantData, isAdminGlobal = false, setSelectedChildId, systemVersion = '1.0.0' }: DashboardProps) {
-  const tenantId = tenantData?.tenant_id;
-  const [loading, setLoading] = useState(true);
+  const tenantId = useMemo(
+    () => resolveTenantIdForFinance(tenantData?.tenant_id, user?.id),
+    [tenantData?.tenant_id, user?.id]
+  );
   /** Lançamentos da tabela `financeiro` (via `/api/transactions`), no mesmo formato da página Financeiro. */
   const [transactions, setTransactions] = useState<any[]>([]);
   const [childrenData, setChildrenData] = useState<any[]>([]);
@@ -141,107 +254,29 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
     };
   }, [transactions]);
 
-  const fetchDashboardData = useCallback(async () => {
-    try {
-      if (!user) return;
-
-      let lojaTenantPk: string | null = null;
-      if (userRole !== 'filho') {
-        const seed = tenantId || user.id;
-        const { data: plRow } = await supabase
-          .from('perfil_lider')
-          .select('id')
-          .or(`id.eq.${seed},tenant_id.eq.${seed}`)
-          .maybeSingle();
-        lojaTenantPk = plRow?.id || seed;
-      }
-
-      const txUrl = `/api/transactions?tenantId=${encodeURIComponent(
-        tenantId || ''
-      )}&userId=${encodeURIComponent(user.id)}&userRole=${encodeURIComponent(
-        userRole || ''
-      )}&limit=400`;
-
-      const [childrenRes, txRes, lojaRes] = await Promise.all([
-        fetch(`/api/children?userId=${user.id}&tenantId=${tenantId || user.id}`).then((r) => r.json()),
-        fetch(txUrl).then(async (r) => {
-          if (!r.ok) {
-            const errText = await r.text().catch(() => '');
-            console.error('[Dashboard] /api/transactions', r.status, errText);
-            return { data: [] as any[] };
-          }
-          return r.json() as Promise<{ data?: any[] }>;
-        }),
-        userRole !== 'filho' && lojaTenantPk
-          ? supabase
-              .from('loja_pedidos')
-              .select('*')
-              .eq('tenant_id', lojaTenantPk)
-              .order('created_at', { ascending: false })
-              .limit(12)
-          : Promise.resolve({ data: [], error: null } as { data: any[]; error: any }),
-      ]);
-
-      const children = (childrenRes.data || []).filter((c: any) => c.status === 'Ativo');
-      setChildrenData(children.slice(0, 4));
-
-      const rawTx = (txRes.data || []) as any[];
-      const normalized = rawTx.map((t) => ({ ...t, valor: Number(t.valor) || 0 }));
-      setTransactions(normalized);
-
-      const lojaRows = (lojaRes.data || []) as any[];
-
-      const lojaHistorico = lojaRows.map((p) => {
-        const acao = p.tipo === 'reserva' ? 'reservou na loja' : 'comprou na loja';
-        const met =
-          p.metodo_pagamento === 'mensalidade'
-            ? 'mensalidade'
-            : p.metodo_pagamento === 'pix'
-              ? 'PIX'
-              : p.metodo_pagamento === 'reserva'
-                ? 'reserva'
-                : String(p.metodo_pagamento || '');
-        return {
-          tipo: 'entrada',
-          descricao: `${p.filho_nome || 'Filho de santo'} ${acao} (${met}): ${p.resumo_itens || ''}`,
-          valor: Number(p.valor_total) || 0,
-          data: p.created_at,
-        };
-      });
-
-      const merged = [...normalized, ...lojaHistorico].sort(
-        (a, b) => new Date(b.data).getTime() - new Date(a.data).getTime()
-      );
-      setHistoryData(merged.slice(0, 8));
-    } catch (e) {
-      console.error('Error fetching dashboard data:', e);
-      setTransactions([]);
-    }
-  }, [user, tenantId, userRole]);
+  const dashboardSwrKey = user?.id ? (['dashboard-finance', user.id, tenantId, userRole] as const) : null;
+  const { data: dashboardBundle, isLoading, mutate } = useSWR(
+    dashboardSwrKey,
+    () => fetchDashboardFinanceBundle(user!, tenantId, userRole, tenantData?.tenant_id),
+    { revalidateOnMount: true, revalidateOnFocus: true, dedupingInterval: 0 }
+  );
 
   useEffect(() => {
-    if (!user) return;
-    let alive = true;
-    setLoading(true);
-    void (async () => {
-      try {
-        await fetchDashboardData();
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [user, fetchDashboardData]);
+    if (!dashboardBundle) return;
+    setTransactions(dashboardBundle.transactions);
+    setChildrenData(dashboardBundle.childrenData);
+    setHistoryData(dashboardBundle.historyData);
+  }, [dashboardBundle]);
 
   useEffect(() => {
     const onFinanceUpdated = () => {
-      void fetchDashboardData();
+      void mutate();
     };
     window.addEventListener('axecloud:finance-updated', onFinanceUpdated);
     return () => window.removeEventListener('axecloud:finance-updated', onFinanceUpdated);
-  }, [fetchDashboardData]);
+  }, [mutate]);
+
+  const loading = Boolean(dashboardSwrKey && isLoading && !dashboardBundle);
 
   if (loading) return <div className="h-[70vh] flex items-center justify-center"><LuxuryLoading /></div>;
 

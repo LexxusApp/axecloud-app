@@ -29,6 +29,7 @@ import Paywall from './components/Paywall';
 import Subscription from './views/Subscription';
 import { useWebPush } from './hooks/useWebPush';
 import { APP_VERSION } from './config/version';
+import { clearCachedTenantIdForUser, writeCachedTenantIdForUser } from './lib/tenantCache';
 import { PwaInstallTopbarButton } from './components/PwaInstallTopbarButton';
 
 const SYSTEM_VERSION = APP_VERSION; // force logout on update
@@ -125,6 +126,7 @@ export default function App() {
       tenant_id: userId,
       role: fallbackRole,
     });
+    writeCachedTenantIdForUser(userId, userId);
     setIsAdminGlobal(prev => prev || isSuperAdmin);
     setIsMasterActive(prev => prev || isSuperAdmin);
     setSubscriptionActive(true);
@@ -238,6 +240,7 @@ export default function App() {
           cargo: data.cargo ?? undefined,
           role: role
         });
+        writeCachedTenantIdForUser(userId, String(tenantId));
 
           setIsAdminGlobal(isGlobalAdmin);
 
@@ -362,6 +365,8 @@ export default function App() {
             initializedRef.current = true;
           }
         } else {
+          const signingOutUserId = session?.user?.id;
+          if (signingOutUserId) clearCachedTenantIdForUser(signingOutUserId);
           setUserRole(null);
           setIsAdminGlobal(false);
           setSubscriptionActive(true);
