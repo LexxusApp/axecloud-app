@@ -17,6 +17,16 @@ import type { MensalidadeZeladorRow } from '../lib/mensalidadesZeladorApi';
 
 const FINANCE_UPDATED_EVENT = 'axecloud:finance-updated';
 
+/** Alinha status do financeiro (pt) com filtros de aba pending/paid. */
+function mensalidadeStatusIsPending(status: string | null) {
+  const t = String(status ?? '').toLowerCase();
+  return t === 'pendente' || t === 'pending';
+}
+function mensalidadeStatusIsPaid(status: string | null) {
+  const t = String(status ?? '').toLowerCase();
+  return t === 'pago' || t === 'paid';
+}
+
 interface Transaction {
   id: string;
   tipo: 'entrada' | 'saida';
@@ -51,8 +61,8 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [children, setChildren] = useState<any[]>([]);
   const [activeView, setActiveView] = useState<'overview' | 'mensalidades' | 'caixinha' | 'configs'>('overview');
-  const [mensalidadesBucket, setMensalidadesBucket] = useState<'pendentes' | 'pagas'>('pendentes');
-  const [mensalidadesRows, setMensalidadesRows] = useState<MensalidadeZeladorRow[]>([]);
+  const [mensalidadesTab, setMensalidadesTab] = useState<'pendentes' | 'pagas'>('pendentes');
+  const [mensalidades, setMensalidades] = useState<MensalidadeZeladorRow[]>([]);
   const [mensalidadesValorEdits, setMensalidadesValorEdits] = useState<Record<string, string>>({});
   const [mensalidadesLoading, setMensalidadesLoading] = useState(false);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
@@ -135,44 +145,58 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
     }
   }
 
-  const refreshMensalidadesLista = useCallback(
-    async (bucket: 'pendentes' | 'pagas') => {
-      if (!tenantId) return;
-      setMensalidadesLoading(true);
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-        await fetch('/api/v1/financial/mensalidades/sync-pendentes', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ tenant_id: tenantId }),
-        });
-        const view = bucket === 'pagas' ? 'pagas' : 'pendentes';
-        const r = await fetch(
-          `/api/v1/financial/mensalidades?tenantId=${encodeURIComponent(tenantId)}&view=${view}`,
-          { headers: { Authorization: `Bearer ${session.access_token}` } }
-        );
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(String(j.error || 'Falha ao carregar mensalidades'));
-        setMensalidadesRows((j.data || []) as MensalidadeZeladorRow[]);
-      } catch (e) {
-        console.error('refreshMensalidadesLista:', e);
-        setMensalidadesRows([]);
-      } finally {
-        setMensalidadesLoading(false);
-      }
-    },
-    [tenantId]
+  const refreshMensalidades = useCallback(async () => {
+    if (!tenantId) return;
+    setMensalidadesLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+      await fetch('/api/v1/financial/mensalidades/sync-pendentes', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ tenant_id: tenantId }),
+      });
+      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const base = `/api/v1/financial/mensalidades?tenantId=${encodeURIComponent(tenantId)}`;
+      const [rPen, rPag] = await Promise.all([
+        fetch(`${base}&view=pendentes`, { headers }),
+        fetch(`${base}&view=pagas`, { headers }),
+      ]);
+      const jPen = await rPen.json().catch(() => ({}));
+      const jPag = await rPag.json().catch(() => ({}));
+      if (!rPen.ok) throw new Error(String(jPen.error || 'Falha ao carregar pendentes'));
+      if (!rPag.ok) throw new Error(String(jPag.error || 'Falha ao carregar pagas'));
+      const pen = (jPen.data || []) as MensalidadeZeladorRow[];
+      const pag = (jPag.data || []) as MensalidadeZeladorRow[];
+      const byId = new Map<string, MensalidadeZeladorRow>();
+      for (const r of pen) byId.set(r.id, r);
+      for (const r of pag) byId.set(r.id, r);
+      setMensalidades([...byId.values()]);
+    } catch (e) {
+      console.error('refreshMensalidades:', e);
+      setMensalidades([]);
+    } finally {
+      setMensalidadesLoading(false);
+    }
+  }, [tenantId]);
+
+  const mensalidadesPendentes = useMemo(
+    () => mensalidades.filter((r) => mensalidadeStatusIsPending(r.status)),
+    [mensalidades]
+  );
+  const mensalidadesPagas = useMemo(
+    () => mensalidades.filter((r) => mensalidadeStatusIsPaid(r.status)),
+    [mensalidades]
   );
 
   useEffect(() => {
     if (!isAdmin || isAxePlan || !tenantId) return;
     if (activeView !== 'mensalidades') return;
-    void refreshMensalidadesLista(mensalidadesBucket);
-  }, [activeView, mensalidadesBucket, tenantId, isAdmin, isAxePlan, refreshMensalidadesLista]);
+    void refreshMensalidades();
+  }, [activeView, tenantId, isAdmin, isAxePlan, refreshMensalidades]);
 
   async function handleSavePixConfig(e: React.FormEvent) {
     e.preventDefault();
@@ -198,7 +222,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
       if (!res.ok) throw new Error(result.error || 'Erro ao salvar');
       alert('✅ Configurações financeiras salvas com sucesso!');
       if (activeView === 'mensalidades') {
-        void refreshMensalidadesLista(mensalidadesBucket);
+        void refreshMensalidades();
       }
     } catch (error: any) {
       console.error('Error saving pix config:', error);
@@ -359,8 +383,13 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
       return;
     }
 
-    const backup = mensalidadesRows;
-    setMensalidadesRows((prev) => prev.filter((r) => r.id !== row.id));
+    const backup = mensalidades;
+    const paymentDate = new Date().toISOString().split('T')[0];
+    setMensalidades((prev) =>
+      prev.map((r) =>
+        r.id === row.id ? { ...r, status: 'pago', valor, data: paymentDate } : r
+      )
+    );
     window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
 
     try {
@@ -382,10 +411,9 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
       if (!res.ok) throw new Error(String(body.error || 'Falha ao marcar como pago'));
       await fetchTransactions({ silent: true });
       window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
-      await refreshMensalidadesLista('pendentes');
     } catch (error: any) {
       console.error('Error liquidar mensalidade:', error);
-      setMensalidadesRows(backup);
+      setMensalidades(backup);
       window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
       alert(error?.message || 'Erro ao registrar pagamento.');
     }
@@ -394,8 +422,13 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
   async function handleMensalidadeEstornar(row: MensalidadeZeladorRow) {
     if (!tenantId) return;
     if (!confirm('Estornar este pagamento? A mensalidade voltará para pendentes.')) return;
-    const backup = mensalidadesRows;
-    setMensalidadesRows((prev) => prev.filter((r) => r.id !== row.id));
+    const backup = mensalidades;
+    const due = String(row.data_vencimento || row.data || '').slice(0, 10);
+    setMensalidades((prev) =>
+      prev.map((r) =>
+        r.id === row.id ? { ...r, status: 'pendente', data: due || r.data } : r
+      )
+    );
     window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -412,10 +445,9 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
       if (!res.ok) throw new Error(String(body.error || 'Falha ao estornar'));
       await fetchTransactions({ silent: true });
       window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
-      await refreshMensalidadesLista('pagas');
     } catch (error: any) {
       console.error('Error estornar mensalidade:', error);
-      setMensalidadesRows(backup);
+      setMensalidades(backup);
       window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
       alert(error?.message || 'Erro ao estornar.');
     }
@@ -882,17 +914,24 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
                 <div>
                   <h3 className="text-2xl font-black leading-tight text-white sm:text-2xl">Controle de Mensalidades</h3>
                   <p className="mt-1 max-w-lg text-sm font-medium leading-relaxed text-gray-400">
-                    Pendentes vêm do financeiro com status <span className="text-white/80">pendente</span>. Ao marcar
-                    pago, o registro entra no caixa e some daqui.
+                    Use as abas <span className="text-white/80">Pendentes</span> e <span className="text-white/80">Pagas</span>.
+                    Ao marcar como pago, o item sai de pendentes e aparece em pagas na hora.
                   </p>
                 </div>
-                <div className="flex shrink-0 rounded-xl border border-white/10 bg-black/30 p-1">
+                <div
+                  role="tablist"
+                  aria-label="Mensalidades por status"
+                  className="flex shrink-0 rounded-xl border border-white/10 bg-black/30 p-1"
+                >
                   <button
                     type="button"
-                    onClick={() => setMensalidadesBucket('pendentes')}
+                    role="tab"
+                    aria-selected={mensalidadesTab === 'pendentes'}
+                    id="tab-mensalidades-pendentes"
+                    onClick={() => setMensalidadesTab('pendentes')}
                     className={cn(
                       'rounded-lg px-4 py-2 text-xs font-black uppercase tracking-widest transition-all sm:px-5 sm:text-sm',
-                      mensalidadesBucket === 'pendentes'
+                      mensalidadesTab === 'pendentes'
                         ? 'bg-primary text-background shadow-lg'
                         : 'text-gray-500 hover:text-white'
                     )}
@@ -901,15 +940,18 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
                   </button>
                   <button
                     type="button"
-                    onClick={() => setMensalidadesBucket('pagas')}
+                    role="tab"
+                    aria-selected={mensalidadesTab === 'pagas'}
+                    id="tab-mensalidades-pagas"
+                    onClick={() => setMensalidadesTab('pagas')}
                     className={cn(
                       'rounded-lg px-4 py-2 text-xs font-black uppercase tracking-widest transition-all sm:px-5 sm:text-sm',
-                      mensalidadesBucket === 'pagas'
+                      mensalidadesTab === 'pagas'
                         ? 'bg-primary text-background shadow-lg'
                         : 'text-gray-500 hover:text-white'
                     )}
                   >
-                    Ver pagas
+                    Pagas
                   </button>
                 </div>
               </div>
@@ -921,9 +963,9 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
                 </div>
               )}
 
-              {mensalidadesBucket === 'pendentes' ? (
-                <>
-                  {mensalidadesRows.length === 0 && !mensalidadesLoading ? (
+              {mensalidadesTab === 'pendentes' ? (
+                <div role="tabpanel" aria-labelledby="tab-mensalidades-pendentes">
+                  {mensalidadesPendentes.length === 0 && !mensalidadesLoading ? (
                     <div className="flex flex-col items-center justify-center rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.07] px-6 py-14 text-center">
                       <CheckCircle2 className="mb-4 h-16 w-16 text-emerald-500" aria-hidden />
                       <p className="text-lg font-black text-white">Tudo em dia!</p>
@@ -934,7 +976,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
                   ) : (
                     <>
                       <div className="space-y-3 sm:hidden">
-                        {mensalidadesRows.map((row) => {
+                        {mensalidadesPendentes.map((row) => {
                           const nome = row.filhos_de_santo?.nome || 'Filho de santo';
                           const fid = row.filho_id || '';
                           const venc = String(row.data_vencimento || row.data || '').slice(0, 10);
@@ -1007,7 +1049,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-white/5">
-                            {mensalidadesRows.map((row) => {
+                            {mensalidadesPendentes.map((row) => {
                               const nome = row.filhos_de_santo?.nome || 'Filho de santo';
                               const fid = row.filho_id || '';
                               const venc = String(row.data_vencimento || row.data || '').slice(0, 10);
@@ -1063,10 +1105,10 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
                       </div>
                     </>
                   )}
-                </>
+                </div>
               ) : (
-                <div className="space-y-4">
-                  {mensalidadesRows.length === 0 && !mensalidadesLoading ? (
+                <div className="space-y-4" role="tabpanel" aria-labelledby="tab-mensalidades-pagas">
+                  {mensalidadesPagas.length === 0 && !mensalidadesLoading ? (
                     <p className="rounded-xl border border-white/5 bg-white/[0.03] py-10 text-center text-sm font-medium text-gray-500">
                       Nenhuma mensalidade paga registrada no mês atual.
                     </p>
@@ -1082,7 +1124,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
-                          {mensalidadesRows.map((row) => {
+                          {mensalidadesPagas.map((row) => {
                             const nome = row.filhos_de_santo?.nome || 'Filho de santo';
                             const pay = String(row.data || '').slice(0, 10);
                             return (
