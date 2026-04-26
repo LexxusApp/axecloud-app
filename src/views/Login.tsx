@@ -23,7 +23,7 @@ export default function Login() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('updated') !== 'true') return;
 
-    window.history.replaceState({}, document.title, window.location.pathname);
+    window.history.replaceState({}, document.title, '/');
 
     alertHideTimerRef.current = window.setTimeout(() => {
       setShowAlert(false);

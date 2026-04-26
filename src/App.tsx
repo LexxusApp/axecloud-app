@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';
@@ -102,6 +102,14 @@ export default function App() {
   );
 
   const initializedRef = useRef(false);
+
+  /** Login vive na raiz "/"; "/login" só espelha a SPA — normaliza a URL sem recarregar. */
+  useLayoutEffect(() => {
+    const { pathname, search, hash } = window.location;
+    if (pathname === '/login' || pathname === '/login/') {
+      window.history.replaceState(null, '', `/${search}${hash}`);
+    }
+  }, []);
 
   const forceMountAuthenticatedApp = (userId: string, userEmail?: string | null, authRole?: string) => {
     const fallbackRole: 'admin' | 'filho' = isFilhoIdentity(null, userEmail || undefined, authRole)
@@ -301,7 +309,7 @@ export default function App() {
         } finally {
           clearUserSessionStorage();
           localStorage.setItem('axecloud_version', SYSTEM_VERSION);
-          window.location.assign('/login?updated=true');
+          window.location.assign('/?updated=true');
         }
       }
     };
