@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { DollarSign, TrendingUp, TrendingDown, PieChart, Download, Plus, ArrowUpRight, ArrowDownRight, CreditCard, Loader2, X, CheckCircle2, MessageCircle, Lock, Smartphone, Bell, Target, Save } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { DollarSign, TrendingUp, TrendingDown, PieChart, Download, Plus, ArrowUpRight, ArrowDownRight, CreditCard, Loader2, X, CheckCircle2, MessageCircle, Lock, Smartphone, Bell, Target, Save, Undo2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../lib/utils';
@@ -8,27 +8,14 @@ import LuxuryLoading from '../components/LuxuryLoading';
 import FinanceiroBasico from '../components/FinanceiroBasico';
 import PageHeader from '../components/PageHeader';
 import { hasPlanAccess } from '../constants/plans';
-import { computeProximaDataMensalidadePrevisao } from '../lib/mensalidadeDueDate';
 import {
   countsTowardSaldo,
-  isLancamentoNoMesRef,
   normalizeMovimentoTipo,
   parseFinanceiroDataRef,
 } from '../lib/financeiroSaldo';
+import type { MensalidadeZeladorRow } from '../lib/mensalidadesZeladorApi';
 
 const FINANCE_UPDATED_EVENT = 'axecloud:finance-updated';
-
-function derivePaidChildIdsForMonth(transactions: Transaction[], ref: Date = new Date()): Set<string> {
-  const paid = new Set<string>();
-  for (const t of transactions) {
-    if (normalizeMovimentoTipo(t.tipo) !== 'entrada' || t.categoria !== 'Mensalidade') continue;
-    if (!isLancamentoNoMesRef(t, ref)) continue;
-    if (t.filho_id) paid.add(t.filho_id);
-    const match = (t.descricao || '').match(/\(ID:([^)]+)\)/);
-    if (match) paid.add(match[1]);
-  }
-  return paid;
-}
 
 interface Transaction {
   id: string;
@@ -64,7 +51,10 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [children, setChildren] = useState<any[]>([]);
   const [activeView, setActiveView] = useState<'overview' | 'mensalidades' | 'caixinha' | 'configs'>('overview');
-  const [mensalidadesState, setMensalidadesState] = useState<Record<string, { valor: string, data: string, pago: boolean }>>({});
+  const [mensalidadesBucket, setMensalidadesBucket] = useState<'pendentes' | 'pagas'>('pendentes');
+  const [mensalidadesRows, setMensalidadesRows] = useState<MensalidadeZeladorRow[]>([]);
+  const [mensalidadesValorEdits, setMensalidadesValorEdits] = useState<Record<string, string>>({});
+  const [mensalidadesLoading, setMensalidadesLoading] = useState(false);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
 
   // Pix Config State
@@ -110,7 +100,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
     }
   }, [userRole, userId, isAxePlan, hasCaixinhaAccess, tenantId]);
 
-  /** Pix + filhos + datas de vencimento previstas (entrada no terreiro + dia fixo). */
+  /** Pix + lista de filhos (modal de lançamento / configs). Mensalidades pendentes vêm da API `financeiro.status = pendente`. */
   async function fetchMensalidadesGrid() {
     let dia = parseInt(pixConfig.dia_vencimento, 10) || 10;
     let valorPadrao = pixConfig.valor_mensalidade || '89.90';
@@ -134,54 +124,55 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
       console.error('Error fetching pix config:', error);
     }
 
-    let txs: Transaction[] = [];
-    try {
-      const txRes = await fetch(
-        `/api/transactions?tenantId=${encodeURIComponent(tenantId || '')}&userId=${encodeURIComponent(userId || '')}&userRole=${encodeURIComponent(userRole || 'admin')}&limit=300`
-      );
-      if (txRes.ok) {
-        const body = await txRes.json();
-        txs = (body.data || []).map((t: any) => ({ ...t, valor: Number(t.valor) || 0 }));
-      }
-    } catch (e) {
-      console.warn('fetchMensalidadesGrid: transações para marcar pagos', e);
-    }
-    const paidThisMonth = derivePaidChildIdsForMonth(txs, new Date());
-
     try {
       let query = supabase.from('filhos_de_santo').select('id, nome, created_at, data_entrada');
       if (tenantId) query = query.eq('tenant_id', tenantId);
       const { data } = await query;
-      const rows = data || [];
-      setChildren(rows);
-
-      setMensalidadesState((prev) => {
-        const next: Record<string, { valor: string; data: string; pago: boolean }> = {};
-        rows.forEach((child: { id: string; created_at?: string; data_entrada?: string }) => {
-          const existing = prev[child.id];
-          const inc = child.data_entrada || child.created_at;
-          const paid = paidThisMonth.has(child.id) || existing?.pago;
-          if (paid) {
-            next[child.id] = {
-              valor: existing?.valor ?? valorPadrao,
-              data: existing?.data ?? computeProximaDataMensalidadePrevisao(inc, dia),
-              pago: true,
-            };
-          } else {
-            next[child.id] = {
-              valor: valorPadrao,
-              data: computeProximaDataMensalidadePrevisao(inc, dia),
-              pago: false,
-            };
-          }
-        });
-        return next;
-      });
+      setChildren(data || []);
     } catch (error) {
       console.error('Error fetching children for mensalidades:', error);
       setChildren([]);
     }
   }
+
+  const refreshMensalidadesLista = useCallback(
+    async (bucket: 'pendentes' | 'pagas') => {
+      if (!tenantId) return;
+      setMensalidadesLoading(true);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
+        await fetch('/api/v1/financial/mensalidades/sync-pendentes', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ tenant_id: tenantId }),
+        });
+        const view = bucket === 'pagas' ? 'pagas' : 'pendentes';
+        const r = await fetch(
+          `/api/v1/financial/mensalidades?tenantId=${encodeURIComponent(tenantId)}&view=${view}`,
+          { headers: { Authorization: `Bearer ${session.access_token}` } }
+        );
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(String(j.error || 'Falha ao carregar mensalidades'));
+        setMensalidadesRows((j.data || []) as MensalidadeZeladorRow[]);
+      } catch (e) {
+        console.error('refreshMensalidadesLista:', e);
+        setMensalidadesRows([]);
+      } finally {
+        setMensalidadesLoading(false);
+      }
+    },
+    [tenantId]
+  );
+
+  useEffect(() => {
+    if (!isAdmin || isAxePlan || !tenantId) return;
+    if (activeView !== 'mensalidades') return;
+    void refreshMensalidadesLista(mensalidadesBucket);
+  }, [activeView, mensalidadesBucket, tenantId, isAdmin, isAxePlan, refreshMensalidadesLista]);
 
   async function handleSavePixConfig(e: React.FormEvent) {
     e.preventDefault();
@@ -206,21 +197,9 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || 'Erro ao salvar');
       alert('✅ Configurações financeiras salvas com sucesso!');
-      const dia = parseInt(pixConfig.dia_vencimento, 10) || 10;
-      setMensalidadesState((prev) => {
-        const next = { ...prev };
-        children.forEach((child: { id: string; created_at?: string; data_entrada?: string }) => {
-          if (next[child.id]?.pago) return;
-          const inc = child.data_entrada || child.created_at;
-          const cur = next[child.id];
-          next[child.id] = {
-            valor: cur?.valor ?? pixConfig.valor_mensalidade,
-            pago: false,
-            data: computeProximaDataMensalidadePrevisao(inc, dia),
-          };
-        });
-        return next;
-      });
+      if (activeView === 'mensalidades') {
+        void refreshMensalidadesLista(mensalidadesBucket);
+      }
     } catch (error: any) {
       console.error('Error saving pix config:', error);
       alert('Erro ao salvar configurações Pix: ' + (error.message || ''));
@@ -371,65 +350,93 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
     }
   }
 
-  async function handleMensalidadePago(childId: string, nome: string) {
-    const state = mensalidadesState[childId];
-    if (!state || state.pago) return;
+  async function handleMensalidadeLiquidar(row: MensalidadeZeladorRow) {
+    if (!tenantId || !row.filho_id) return;
+    const valorStr = mensalidadesValorEdits[row.id] ?? String(row.valor ?? '');
+    const valor = parseFloat(valorStr);
+    if (!Number.isFinite(valor) || valor <= 0) {
+      alert('Informe um valor válido para a mensalidade.');
+      return;
+    }
+
+    const backup = mensalidadesRows;
+    setMensalidadesRows((prev) => prev.filter((r) => r.id !== row.id));
+    window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error('Sessão inválida');
-      if (!tenantId) throw new Error('Terreiro não identificado');
-
-      const res = await fetch('/api/v1/financial/confirm-mensalidade', {
+      const res = await fetch('/api/v1/financial/mensalidades/liquidar', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          filho_id: childId,
-          filho_nome: nome,
-          valor: parseFloat(state.valor) || 0,
-          competencia_date: state.data,
+          id: row.id,
           tenant_id: tenantId,
+          valor,
         }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || 'Falha ao confirmar pagamento');
-
-      setMensalidadesState((prev) => ({
-        ...prev,
-        [childId]: { ...prev[childId], pago: true },
-      }));
-      await fetchTransactions();
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
-      }
+      if (!res.ok) throw new Error(String(body.error || 'Falha ao marcar como pago'));
+      await fetchTransactions({ silent: true });
+      window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
+      await refreshMensalidadesLista('pendentes');
     } catch (error: any) {
-      console.error('Error registering mensalidade:', error);
+      console.error('Error liquidar mensalidade:', error);
+      setMensalidadesRows(backup);
+      window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
       alert(error?.message || 'Erro ao registrar pagamento.');
     }
   }
 
-  async function handleGerarCobranca(childId: string, nome: string) {
+  async function handleMensalidadeEstornar(row: MensalidadeZeladorRow) {
+    if (!tenantId) return;
+    if (!confirm('Estornar este pagamento? A mensalidade voltará para pendentes.')) return;
+    const backup = mensalidadesRows;
+    setMensalidadesRows((prev) => prev.filter((r) => r.id !== row.id));
+    window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Sessão inválida');
+      const res = await fetch('/api/v1/financial/mensalidades/estornar', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ id: row.id, tenant_id: tenantId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(String(body.error || 'Falha ao estornar'));
+      await fetchTransactions({ silent: true });
+      window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
+      await refreshMensalidadesLista('pagas');
+    } catch (error: any) {
+      console.error('Error estornar mensalidade:', error);
+      setMensalidadesRows(backup);
+      window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
+      alert(error?.message || 'Erro ao estornar.');
+    }
+  }
+
+  async function handleGerarCobranca(childId: string, nome: string, competenciaIso: string, valorExibicao: string) {
     if (!hasMensalidadesAccess) {
       setIsUpgradeModalOpen(true);
       return;
     }
 
-    const state = mensalidadesState[childId];
-    if (!state) return;
-
     try {
-      const [year, month] = state.data.split('-');
+      const [year, month] = competenciaIso.split('-');
       const mesAno = `${month}/${year}`;
-      
+
       const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch('/api/whatsapp/send', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`
+          Authorization: `Bearer ${session?.access_token}`,
         },
         body: JSON.stringify({
           tipo: 'cobranca_mensalidade',
@@ -437,12 +444,12 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
           variables: {
             nome_filho: nome,
             mes_ano: mesAno,
-            valor: state.valor,
-            nome_terreiro: tenantData?.nome || 'Nosso Terreiro'
-          }
-        })
+            valor: valorExibicao,
+            nome_terreiro: tenantData?.nome || 'Nosso Terreiro',
+          },
+        }),
       });
-      
+
       if (!response.ok) throw new Error('Failed to send message');
       alert('✅ Cobrança Enviada com Sucesso para o WhatsApp!');
     } catch (error) {
@@ -871,174 +878,243 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
         <div className="space-y-6">
           {activeView === 'mensalidades' ? (
             <div className="card-luxury p-4 sm:p-6 lg:p-8">
-              <div className="mb-6 grid gap-2 sm:mb-8 sm:grid-cols-[1fr_auto] sm:items-center">
-                <h3 className="text-2xl font-black leading-tight text-white sm:text-2xl">Controle de Mensalidades</h3>
-                <p className="max-w-xs text-sm font-medium leading-relaxed text-gray-400 sm:text-right">Gerencie os pagamentos dos filhos de santo.</p>
-              </div>
-
-              <div className="space-y-3 sm:hidden">
-                {children.map((child: { id: string; nome: string; created_at?: string; data_entrada?: string }) => {
-                  const inc = child.data_entrada || child.created_at;
-                  const dia = parseInt(pixConfig.dia_vencimento, 10) || 10;
-                  const state = mensalidadesState[child.id] || {
-                    valor: pixConfig.valor_mensalidade,
-                    data: computeProximaDataMensalidadePrevisao(inc, dia),
-                    pago: false,
-                  };
-                  return (
-                    <div key={child.id} className="rounded-xl border border-white/5 bg-white/[0.03] p-4">
-                      <div className="mb-4 flex items-start justify-between gap-3">
-                        <h4 className="min-w-0 flex-1 text-base font-black leading-snug text-white">{child.nome}</h4>
-                        <span className={cn(
-                          "shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-widest",
-                          state.pago ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-500" : "border-red-500/20 bg-red-500/10 text-red-500"
-                        )}>
-                          {state.pago ? 'Pago' : 'Pendente'}
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3">
-                        <label className="space-y-1.5">
-                          <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Valor</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={state.valor}
-                            onChange={e => setMensalidadesState(prev => ({ ...prev, [child.id]: { ...prev[child.id], valor: e.target.value } }))}
-                            className="h-11 w-full rounded-lg border border-border bg-background px-3 text-sm font-bold text-white outline-none focus:border-primary"
-                            disabled={state.pago}
-                          />
-                        </label>
-                        <label className="space-y-1.5">
-                          <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Vencimento</span>
-                          <input
-                            type="date"
-                            value={state.data}
-                            onChange={e => setMensalidadesState(prev => ({ ...prev, [child.id]: { ...prev[child.id], data: e.target.value } }))}
-                            className="h-11 w-full rounded-lg border border-border bg-background px-2 text-xs font-bold text-white outline-none focus:border-primary"
-                            disabled={state.pago}
-                          />
-                        </label>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-2 gap-2">
-                        <button
-                          onClick={() => handleMensalidadePago(child.id, child.nome)}
-                          disabled={state.pago}
-                          className={cn(
-                            "h-10 rounded-lg text-xs font-black transition-all",
-                            state.pago ? "cursor-not-allowed bg-emerald-500/20 text-emerald-500" : "bg-white/10 text-white hover:bg-white/20"
-                          )}
-                        >
-                          {state.pago ? 'Registrado' : 'Pago'}
-                        </button>
-                        <button
-                          onClick={() => handleGerarCobranca(child.id, child.nome)}
-                          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#25D366]/10 text-xs font-black text-[#25D366] transition-all hover:bg-[#25D366]/20"
-                          title="Gerar Cobrança WhatsApp"
-                        >
-                          <MessageCircle className="h-4 w-4" />
-                          Cobrar
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-                {children.length === 0 && (
-                  <div className="rounded-xl border border-white/5 bg-white/[0.03] p-6 text-center text-sm font-medium text-gray-500">
-                    Nenhum filho de santo cadastrado.
-                  </div>
-                )}
-              </div>
-
-              <div className="hidden overflow-x-auto sm:block">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-white/5">
-                      <th className="pb-4 font-black text-gray-500 uppercase tracking-widest text-xs">Nome</th>
-                      <th className="pb-4 font-black text-gray-500 uppercase tracking-widest text-xs">Valor (R$)</th>
-                      <th
-                        className="pb-4 font-black text-gray-500 uppercase tracking-widest text-xs max-w-[200px]"
-                        title="Calculado pela data de entrada no terreiro (ou cadastro) e pelo dia fixo nas configurações. Na véspera do vencimento, já exibe o mês seguinte."
-                      >
-                        Vencimento previsto
-                      </th>
-                      <th className="pb-4 font-black text-gray-500 uppercase tracking-widest text-xs">Status</th>
-                      <th className="pb-4 font-black text-gray-500 uppercase tracking-widest text-xs text-right">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {children.map((child: { id: string; nome: string; created_at?: string; data_entrada?: string }) => {
-                      const inc = child.data_entrada || child.created_at;
-                      const dia = parseInt(pixConfig.dia_vencimento, 10) || 10;
-                      const state = mensalidadesState[child.id] || {
-                        valor: pixConfig.valor_mensalidade,
-                        data: computeProximaDataMensalidadePrevisao(inc, dia),
-                        pago: false,
-                      };
-                      return (
-                        <tr key={child.id} className="group hover:bg-white/[0.02] transition-colors">
-                          <td className="py-4 font-bold text-white">{child.nome}</td>
-                          <td className="py-4">
-                            <input 
-                              type="number" 
-                              step="0.01"
-                              value={state.valor}
-                              onChange={e => setMensalidadesState(prev => ({ ...prev, [child.id]: { ...prev[child.id], valor: e.target.value } }))}
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-white focus:border-primary outline-none w-24"
-                              disabled={state.pago}
-                            />
-                          </td>
-                          <td className="py-4">
-                            <input 
-                              type="date" 
-                              value={state.data}
-                              onChange={e => setMensalidadesState(prev => ({ ...prev, [child.id]: { ...prev[child.id], data: e.target.value } }))}
-                              className="bg-background border border-border rounded-lg px-3 py-2 text-white focus:border-primary outline-none"
-                              disabled={state.pago}
-                            />
-                          </td>
-                          <td className="py-4">
-                            <span className={cn(
-                              "px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest border",
-                              state.pago ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : "bg-red-500/10 text-red-500 border-red-500/20"
-                            )}>
-                              {state.pago ? 'Pago' : 'Pendente'}
-                            </span>
-                          </td>
-                          <td className="py-4 text-right space-x-2">
-                            <button
-                              onClick={() => handleMensalidadePago(child.id, child.nome)}
-                              disabled={state.pago}
-                              className={cn(
-                                "px-4 py-2 rounded-lg font-bold text-xs transition-all",
-                                state.pago ? "bg-emerald-500/20 text-emerald-500 cursor-not-allowed" : "bg-white/10 text-white hover:bg-white/20"
-                              )}
-                            >
-                              {state.pago ? 'Registrado' : 'Pago'}
-                            </button>
-                            <button
-                              onClick={() => handleGerarCobranca(child.id, child.nome)}
-                              className="px-4 py-2 bg-[#25D366]/10 text-[#25D366] hover:bg-[#25D366]/20 rounded-lg font-bold text-xs transition-all inline-flex items-center gap-2"
-                              title="Gerar Cobrança WhatsApp"
-                            >
-                              <MessageCircle className="w-4 h-4" />
-                              Cobrar
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {children.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="py-8 text-center text-gray-500 font-medium">
-                          Nenhum filho de santo cadastrado.
-                        </td>
-                      </tr>
+              <div className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-2xl font-black leading-tight text-white sm:text-2xl">Controle de Mensalidades</h3>
+                  <p className="mt-1 max-w-lg text-sm font-medium leading-relaxed text-gray-400">
+                    Pendentes vêm do financeiro com status <span className="text-white/80">pendente</span>. Ao marcar
+                    pago, o registro entra no caixa e some daqui.
+                  </p>
+                </div>
+                <div className="flex shrink-0 rounded-xl border border-white/10 bg-black/30 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setMensalidadesBucket('pendentes')}
+                    className={cn(
+                      'rounded-lg px-4 py-2 text-xs font-black uppercase tracking-widest transition-all sm:px-5 sm:text-sm',
+                      mensalidadesBucket === 'pendentes'
+                        ? 'bg-primary text-background shadow-lg'
+                        : 'text-gray-500 hover:text-white'
                     )}
-                  </tbody>
-                </table>
+                  >
+                    Pendentes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMensalidadesBucket('pagas')}
+                    className={cn(
+                      'rounded-lg px-4 py-2 text-xs font-black uppercase tracking-widest transition-all sm:px-5 sm:text-sm',
+                      mensalidadesBucket === 'pagas'
+                        ? 'bg-primary text-background shadow-lg'
+                        : 'text-gray-500 hover:text-white'
+                    )}
+                  >
+                    Ver pagas
+                  </button>
+                </div>
               </div>
+
+              {mensalidadesLoading && (
+                <div className="mb-4 flex items-center gap-2 text-sm font-bold text-gray-400">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  Atualizando lista…
+                </div>
+              )}
+
+              {mensalidadesBucket === 'pendentes' ? (
+                <>
+                  {mensalidadesRows.length === 0 && !mensalidadesLoading ? (
+                    <div className="flex flex-col items-center justify-center rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.07] px-6 py-14 text-center">
+                      <CheckCircle2 className="mb-4 h-16 w-16 text-emerald-500" aria-hidden />
+                      <p className="text-lg font-black text-white">Tudo em dia!</p>
+                      <p className="mt-2 max-w-md text-sm font-medium leading-relaxed text-gray-400">
+                        Nenhuma mensalidade pendente para este período.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-3 sm:hidden">
+                        {mensalidadesRows.map((row) => {
+                          const nome = row.filhos_de_santo?.nome || 'Filho de santo';
+                          const fid = row.filho_id || '';
+                          const venc = String(row.data_vencimento || row.data || '').slice(0, 10);
+                          const valorCampo = mensalidadesValorEdits[row.id] ?? String(row.valor ?? '');
+                          return (
+                            <div key={row.id} className="rounded-xl border border-white/5 bg-white/[0.03] p-4">
+                              <div className="mb-3 flex items-start justify-between gap-3">
+                                <h4 className="min-w-0 flex-1 text-base font-black leading-snug text-white">{nome}</h4>
+                                <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-amber-400">
+                                  Pendente
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <label className="space-y-1.5">
+                                  <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Valor (R$)</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={valorCampo}
+                                    onChange={(e) =>
+                                      setMensalidadesValorEdits((prev) => ({ ...prev, [row.id]: e.target.value }))
+                                    }
+                                    className="h-11 w-full rounded-lg border border-border bg-background px-3 text-sm font-bold text-white outline-none focus:border-primary"
+                                  />
+                                </label>
+                                <div className="space-y-1.5">
+                                  <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Vencimento</span>
+                                  <p className="flex h-11 items-center rounded-lg border border-white/5 bg-black/30 px-3 text-xs font-bold text-gray-300">
+                                    {venc ? new Date(`${venc}T12:00:00`).toLocaleDateString('pt-BR') : '—'}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="mt-4 grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleMensalidadeLiquidar(row)}
+                                  className="h-10 rounded-lg bg-white/10 text-xs font-black text-white transition-all hover:bg-white/20"
+                                >
+                                  Pago
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    fid
+                                      ? void handleGerarCobranca(fid, nome, venc, valorCampo)
+                                      : undefined
+                                  }
+                                  disabled={!fid}
+                                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#25D366]/10 text-xs font-black text-[#25D366] transition-all hover:bg-[#25D366]/20 disabled:opacity-40"
+                                  title="Gerar Cobrança WhatsApp"
+                                >
+                                  <MessageCircle className="h-4 w-4" />
+                                  Cobrar
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="hidden overflow-x-auto sm:block">
+                        <table className="w-full border-collapse text-left">
+                          <thead>
+                            <tr className="border-b border-white/5">
+                              <th className="pb-4 text-xs font-black uppercase tracking-widest text-gray-500">Filho</th>
+                              <th className="pb-4 text-xs font-black uppercase tracking-widest text-gray-500">Valor (R$)</th>
+                              <th className="pb-4 text-xs font-black uppercase tracking-widest text-gray-500">Vencimento</th>
+                              <th className="pb-4 text-xs font-black uppercase tracking-widest text-gray-500">Status</th>
+                              <th className="pb-4 text-right text-xs font-black uppercase tracking-widest text-gray-500">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5">
+                            {mensalidadesRows.map((row) => {
+                              const nome = row.filhos_de_santo?.nome || 'Filho de santo';
+                              const fid = row.filho_id || '';
+                              const venc = String(row.data_vencimento || row.data || '').slice(0, 10);
+                              const valorCampo = mensalidadesValorEdits[row.id] ?? String(row.valor ?? '');
+                              return (
+                                <tr key={row.id} className="group transition-colors hover:bg-white/[0.02]">
+                                  <td className="py-4 font-bold text-white">{nome}</td>
+                                  <td className="py-4">
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={valorCampo}
+                                      onChange={(e) =>
+                                        setMensalidadesValorEdits((prev) => ({ ...prev, [row.id]: e.target.value }))
+                                      }
+                                      className="w-28 rounded-lg border border-border bg-background px-3 py-2 text-sm font-bold text-white outline-none focus:border-primary"
+                                    />
+                                  </td>
+                                  <td className="py-4 text-sm font-medium text-gray-300">
+                                    {venc ? new Date(`${venc}T12:00:00`).toLocaleDateString('pt-BR') : '—'}
+                                  </td>
+                                  <td className="py-4">
+                                    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-black uppercase tracking-widest text-amber-400">
+                                      Pendente
+                                    </span>
+                                  </td>
+                                  <td className="space-x-2 py-4 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleMensalidadeLiquidar(row)}
+                                      className="rounded-lg bg-white/10 px-4 py-2 text-xs font-bold text-white transition-all hover:bg-white/20"
+                                    >
+                                      Pago
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        fid ? void handleGerarCobranca(fid, nome, venc, valorCampo) : undefined
+                                      }
+                                      disabled={!fid}
+                                      className="inline-flex items-center gap-2 rounded-lg bg-[#25D366]/10 px-4 py-2 text-xs font-bold text-[#25D366] transition-all hover:bg-[#25D366]/20 disabled:opacity-40"
+                                      title="Gerar Cobrança WhatsApp"
+                                    >
+                                      <MessageCircle className="h-4 w-4" />
+                                      Cobrar
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </>
+              ) : (
+                <div className="space-y-4">
+                  {mensalidadesRows.length === 0 && !mensalidadesLoading ? (
+                    <p className="rounded-xl border border-white/5 bg-white/[0.03] py-10 text-center text-sm font-medium text-gray-500">
+                      Nenhuma mensalidade paga registrada no mês atual.
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-white/5">
+                      <table className="w-full border-collapse text-left">
+                        <thead>
+                          <tr className="border-b border-white/5 bg-white/[0.03]">
+                            <th className="px-4 py-3 text-xs font-black uppercase tracking-widest text-gray-500">Filho</th>
+                            <th className="px-4 py-3 text-xs font-black uppercase tracking-widest text-gray-500">Valor</th>
+                            <th className="px-4 py-3 text-xs font-black uppercase tracking-widest text-gray-500">Data do pagamento</th>
+                            <th className="px-4 py-3 text-right text-xs font-black uppercase tracking-widest text-gray-500">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {mensalidadesRows.map((row) => {
+                            const nome = row.filhos_de_santo?.nome || 'Filho de santo';
+                            const pay = String(row.data || '').slice(0, 10);
+                            return (
+                              <tr key={row.id}>
+                                <td className="px-4 py-3 font-bold text-white">{nome}</td>
+                                <td className="px-4 py-3 text-sm font-black text-emerald-400">
+                                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                                    Number(row.valor) || 0
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-300">
+                                  {pay ? new Date(`${pay}T12:00:00`).toLocaleDateString('pt-BR') : '—'}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleMensalidadeEstornar(row)}
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-black text-rose-400 transition-colors hover:bg-rose-500/20"
+                                  >
+                                    <Undo2 className="h-3.5 w-3.5" />
+                                    Estornar
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ) : activeView === 'caixinha' ? (
             <div className="space-y-8">

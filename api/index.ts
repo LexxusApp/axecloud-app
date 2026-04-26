@@ -6,6 +6,7 @@ import axios from "axios";
 import { fileURLToPath } from "url";
 import cors from "cors";
 import webpush from "web-push";
+import * as MensZelador from "../src/lib/mensalidadesZeladorApi.ts";
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);
@@ -852,6 +853,94 @@ async function startServer() {
       return res.json({ success: true, id: inserted?.id, via: "insert" });
     } catch (err: any) {
       console.error("[SERVER] confirm-mensalidade:", err?.message || err);
+      res.status(500).json({ error: err?.message || "Erro interno" });
+    }
+  });
+
+  app.post("/api/v1/financial/mensalidades/sync-pendentes", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Não autorizado" });
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Token inválido" });
+      const tenant_id = String((req.body || {}).tenant_id || "").trim();
+      if (!tenant_id) return res.status(400).json({ error: "tenant_id obrigatório" });
+      const ok = await MensZelador.assertZeladorTenantAccess(supabaseAdmin, resolveLeaderId, user.id, tenant_id);
+      if (!ok) return res.status(403).json({ error: "Sem permissão" });
+      const { created } = await MensZelador.syncMensalidadesPendentes(supabaseAdmin, resolveLeaderId, user.id, tenant_id);
+      res.json({ success: true, created });
+    } catch (err: any) {
+      console.error("[SERVER] mensalidades/sync-pendentes:", err?.message || err);
+      res.status(500).json({ error: err?.message || "Erro interno" });
+    }
+  });
+
+  app.get("/api/v1/financial/mensalidades", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Não autorizado" });
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Token inválido" });
+      const tenantId = String(req.query.tenantId || "").trim();
+      const view = String(req.query.view || "pendentes").toLowerCase();
+      if (!tenantId) return res.status(400).json({ error: "tenantId obrigatório" });
+      const ok = await MensZelador.assertZeladorTenantAccess(supabaseAdmin, resolveLeaderId, user.id, tenantId);
+      if (!ok) return res.status(403).json({ error: "Sem permissão" });
+      const data =
+        view === "pagas"
+          ? await MensZelador.fetchMensalidadesPagasMesAtual(supabaseAdmin, tenantId, new Date())
+          : await MensZelador.fetchMensalidadesPendentesList(supabaseAdmin, tenantId);
+      res.json({ data });
+    } catch (err: any) {
+      console.error("[SERVER] mensalidades GET:", err?.message || err);
+      res.status(500).json({ error: err?.message || "Erro interno" });
+    }
+  });
+
+  app.post("/api/v1/financial/mensalidades/liquidar", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Não autorizado" });
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Token inválido" });
+      const { id, tenant_id, valor } = req.body || {};
+      if (!id || !tenant_id) return res.status(400).json({ error: "id e tenant_id obrigatórios" });
+      const ok = await MensZelador.assertZeladorTenantAccess(supabaseAdmin, resolveLeaderId, user.id, String(tenant_id));
+      if (!ok) return res.status(403).json({ error: "Sem permissão" });
+      const v = valor !== undefined && valor !== null ? Number(valor) : undefined;
+      await MensZelador.liquidarMensalidadePendente(
+        supabaseAdmin,
+        resolveLeaderId,
+        user.id,
+        String(tenant_id),
+        String(id),
+        v
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[SERVER] mensalidades/liquidar:", err?.message || err);
+      res.status(500).json({ error: err?.message || "Erro interno" });
+    }
+  });
+
+  app.post("/api/v1/financial/mensalidades/estornar", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Não autorizado" });
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Token inválido" });
+      const { id, tenant_id } = req.body || {};
+      if (!id || !tenant_id) return res.status(400).json({ error: "id e tenant_id obrigatórios" });
+      const ok = await MensZelador.assertZeladorTenantAccess(supabaseAdmin, resolveLeaderId, user.id, String(tenant_id));
+      if (!ok) return res.status(403).json({ error: "Sem permissão" });
+      await MensZelador.estornarMensalidadePaga(supabaseAdmin, resolveLeaderId, user.id, String(tenant_id), String(id), new Date());
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[SERVER] mensalidades/estornar:", err?.message || err);
       res.status(500).json({ error: err?.message || "Erro interno" });
     }
   });
