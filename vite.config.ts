@@ -14,12 +14,16 @@ export default defineConfig(({mode}) => {
         registerType: 'autoUpdate',
         includeAssets: ['pwa-icon-192.svg', 'pwa-icon-512.svg', 'sw-push.js'],
         manifest: {
+          id: '/',
           name: 'AxéCloud',
           short_name: 'AxéCloud',
           description: 'Gestão Inteligente para sua Comunidade',
+          start_url: '/',
+          scope: '/',
           theme_color: '#ffffff',
           background_color: '#ffffff',
           display: 'standalone',
+          display_override: ['window-controls-overlay', 'standalone'],
           icons: [
             {
               src: '/pwa-icon-192.svg',
