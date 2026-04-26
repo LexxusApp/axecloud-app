@@ -9,17 +9,20 @@ import FinanceiroBasico from '../components/FinanceiroBasico';
 import PageHeader from '../components/PageHeader';
 import { hasPlanAccess } from '../constants/plans';
 import { computeProximaDataMensalidadePrevisao } from '../lib/mensalidadeDueDate';
+import {
+  countsTowardSaldo,
+  isLancamentoNoMesRef,
+  normalizeMovimentoTipo,
+  parseFinanceiroDataRef,
+} from '../lib/financeiroSaldo';
 
 const FINANCE_UPDATED_EVENT = 'axecloud:finance-updated';
 
 function derivePaidChildIdsForMonth(transactions: Transaction[], ref: Date = new Date()): Set<string> {
-  const y = ref.getFullYear();
-  const m = ref.getMonth();
   const paid = new Set<string>();
   for (const t of transactions) {
-    if (t.tipo !== 'entrada' || t.categoria !== 'Mensalidade') continue;
-    const d = new Date(t.data);
-    if (d.getFullYear() !== y || d.getMonth() !== m) continue;
+    if (normalizeMovimentoTipo(t.tipo) !== 'entrada' || t.categoria !== 'Mensalidade') continue;
+    if (!isLancamentoNoMesRef(t, ref)) continue;
     if (t.filho_id) paid.add(t.filho_id);
     const match = (t.descricao || '').match(/\(ID:([^)]+)\)/);
     if (match) paid.add(match[1]);
@@ -35,6 +38,8 @@ interface Transaction {
   data: string;
   descricao: string;
   filho_id?: string;
+  status?: string | null;
+  created_at?: string | null;
 }
 
 interface FinancialProps {
@@ -526,43 +531,43 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
   }
 
   const stats = useMemo(() => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = now.getMonth();
     return transactions.reduce((acc, curr) => {
-      const d = new Date(curr.data);
-      if (d.getFullYear() !== y || d.getMonth() !== m) return acc;
+      if (!countsTowardSaldo(curr)) return acc;
       const valor = Number(curr.valor) || 0;
-      if (curr.tipo === 'entrada') acc.entradas += valor;
-      else acc.saidas += valor;
+      const mt = normalizeMovimentoTipo(curr.tipo);
+      if (mt === 'entrada') acc.entradas += valor;
+      else if (mt === 'saida') acc.saidas += valor;
       return acc;
     }, { entradas: 0, saidas: 0 });
   }, [transactions]);
 
   const saldo = useMemo(() => stats.entradas - stats.saidas, [stats]);
 
-  /** Entradas do mês calendário atual, agregadas por dia (pagamentos do mês). */
+  /** Entradas confirmadas agregadas por mês de competência (últimos 12 meses com lançamento). */
   const chartData = useMemo(() => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const mo = now.getMonth();
-    const entradas = transactions.filter((t) => {
-      if (t.tipo !== 'entrada') return false;
-      const d = new Date(t.data);
-      return d.getFullYear() === y && d.getMonth() === mo;
-    });
-    const byDay: Record<string, number> = {};
-    for (const t of entradas) {
-      const key = String(t.data).slice(0, 10);
-      byDay[key] = (byDay[key] || 0) + (Number(t.valor) || 0);
+    const byMonth: Record<string, number> = {};
+    for (const t of transactions) {
+      if (!countsTowardSaldo(t)) continue;
+      if (normalizeMovimentoTipo(t.tipo) !== 'entrada') continue;
+      const d = parseFinanceiroDataRef(t);
+      if (!d) continue;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      byMonth[key] = (byMonth[key] || 0) + (Number(t.valor) || 0);
     }
-    return Object.entries(byDay)
+    return Object.entries(byMonth)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, value]) => ({
-        name: new Date(`${date}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }),
-        value,
-        tipo: 'entrada' as const,
-      }));
+      .slice(-12)
+      .map(([ym, value]) => {
+        const [yearStr, monthStr] = ym.split('-');
+        const y = Number(yearStr);
+        const mo = Number(monthStr);
+        const labelDate = new Date(y, mo - 1, 1);
+        return {
+          name: labelDate.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }),
+          value,
+          tipo: 'entrada' as const,
+        };
+      });
   }, [transactions]);
 
   if (loading && transactions.length === 0) {
@@ -664,7 +669,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
             </div>
             <span className="text-[10px] md:text-xs font-black text-emerald-500 uppercase tracking-widest bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">+15%</span>
           </div>
-          <p className="text-xs md:text-sm font-bold text-gray-500 uppercase tracking-widest">Entradas do Mês</p>
+          <p className="text-xs md:text-sm font-bold text-gray-500 uppercase tracking-widest">Entradas (confirmadas)</p>
           <h3 className="text-3xl md:text-4xl font-black text-white mt-2">
             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.entradas)}
           </h3>
@@ -677,7 +682,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
             </div>
             <span className="text-[10px] md:text-xs font-black text-red-500 uppercase tracking-widest bg-red-500/10 px-3 py-1 rounded-full border border-red-500/20">-5%</span>
           </div>
-          <p className="text-xs md:text-sm font-bold text-gray-500 uppercase tracking-widest">Saídas do Mês</p>
+          <p className="text-xs md:text-sm font-bold text-gray-500 uppercase tracking-widest">Saídas (confirmadas)</p>
           <h3 className="text-3xl md:text-4xl font-black text-white mt-2">
             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.saidas)}
           </h3>
@@ -690,7 +695,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
             </div>
             <span className="text-[10px] md:text-xs font-black text-primary uppercase tracking-widest bg-primary/10 px-3 py-1 rounded-full border border-primary/20">Saldo</span>
           </div>
-          <p className="text-xs md:text-sm font-bold text-gray-500 uppercase tracking-widest">Saldo Líquido</p>
+          <p className="text-xs md:text-sm font-bold text-gray-500 uppercase tracking-widest">Saldo no caixa</p>
           <h3 className="text-3xl md:text-4xl font-black text-white mt-2">
             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(saldo)}
           </h3>

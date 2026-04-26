@@ -31,34 +31,12 @@ import {
 import { cn } from '../lib/utils';
 import LuxuryLoading from '../components/LuxuryLoading';
 import { supabase } from '../lib/supabase';
-
-/** Alinha com a tabela `financeiro`: entrada/saída; aceita legado receita/despesa. */
-function normalizeMovimentoTipo(tipo: string | undefined | null): 'entrada' | 'saida' | 'outro' {
-  const t = (tipo || '').toLowerCase();
-  if (t === 'entrada' || t === 'receita') return 'entrada';
-  if (t === 'saida' || t === 'saída' || t === 'despesa') return 'saida';
-  return 'outro';
-}
-
-/**
- * Alinha com `Financial.tsx` (useMemo de stats / gráfico): mês do calendário
- * local a partir de `data`, com o mesmo `new Date` que a página Financeiro.
- */
-function isLancamentoNoMesRef(
-  t: { data?: string; created_at?: string },
-  ref: Date
-): boolean {
-  const raw = t.data;
-  if (raw == null || String(raw).trim() === '') {
-    if (!t.created_at) return false;
-    const d = new Date(t.created_at);
-    if (Number.isNaN(d.getTime())) return false;
-    return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
-  }
-  const d = new Date(raw as string);
-  if (Number.isNaN(d.getTime())) return false;
-  return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
-}
+import {
+  countsTowardSaldo,
+  isLancamentoNoMesRef,
+  normalizeMovimentoTipo,
+  parseFinanceiroDataRef,
+} from '../lib/financeiroSaldo';
 
 interface DashboardProps {
   setActiveTab: (tab: string) => void;
@@ -92,22 +70,24 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
 
   const { stats, chartData, hasMonthFinanceData } = useMemo(() => {
     const anchor = new Date();
-    const curStart = startOfMonth(anchor);
-    const curEnd = endOfMonth(anchor);
     const prevMonthRef = subMonths(anchor, 1);
 
-    const monthTx = transactions.filter((t) => isLancamentoNoMesRef(t, anchor));
+    const counted = transactions.filter((t) => countsTowardSaldo(t));
 
     let rec = 0;
     let des = 0;
-    for (const t of monthTx) {
+    for (const t of counted) {
       const n = Number(t.valor) || 0;
       const mt = normalizeMovimentoTipo(t.tipo);
       if (mt === 'entrada') rec += n;
       else if (mt === 'saida') des += n;
     }
 
-    const prevRec = transactions
+    const curMonthRec = counted
+      .filter((t) => isLancamentoNoMesRef(t, anchor) && normalizeMovimentoTipo(t.tipo) === 'entrada')
+      .reduce((acc, t) => acc + (Number(t.valor) || 0), 0);
+
+    const prevRec = counted
       .filter(
         (t) =>
           isLancamentoNoMesRef(t, prevMonthRef) && normalizeMovimentoTipo(t.tipo) === 'entrada'
@@ -116,8 +96,8 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
 
     let growthPct: number | null = null;
     if (prevRec > 0) {
-      growthPct = Math.round(((rec - prevRec) / prevRec) * 100);
-    } else if (rec > 0) {
+      growthPct = Math.round(((curMonthRec - prevRec) / prevRec) * 100);
+    } else if (curMonthRec > 0) {
       growthPct = 100;
     }
 
@@ -133,23 +113,18 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
 
     const hasData = rec > 0 || des > 0;
 
-    const receitaPorDia: Record<string, number> = {};
-    for (const t of monthTx) {
-      if (normalizeMovimentoTipo(t.tipo) !== 'entrada') continue;
-      const rawD = t.data;
-      const key =
-        rawD != null && String(rawD).trim() !== ''
-          ? String(rawD).slice(0, 10)
-          : t.created_at
-            ? String(t.created_at).slice(0, 10)
-            : '';
-      if (!key) continue;
-      receitaPorDia[key] = (receitaPorDia[key] || 0) + (Number(t.valor) || 0);
-    }
-    const daysCur = eachDayOfInterval({ start: curStart, end: curEnd });
+    const entradasOrdenadas = counted
+      .filter((t) => normalizeMovimentoTipo(t.tipo) === 'entrada')
+      .map((t) => {
+        const d = parseFinanceiroDataRef(t);
+        const ts = d ? d.getTime() : 0;
+        return { ts, valor: Number(t.valor) || 0 };
+      })
+      .filter((x) => x.ts > 0)
+      .sort((a, b) => a.ts - b.ts);
     let cum = 0;
-    const series = daysCur.map((day) => {
-      cum += receitaPorDia[format(day, 'yyyy-MM-dd')] || 0;
+    const series = entradasOrdenadas.map((row) => {
+      cum += row.valor;
       return { val: cum };
     });
 
@@ -328,7 +303,7 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
             
             <div className="relative z-10 flex justify-between items-start mb-2">
                <div>
-                  <p className="text-sm font-medium text-gray-400">Pagamentos do Mês</p>
+                  <p className="text-sm font-medium text-gray-400">Entradas no caixa (acumulado)</p>
                   <h2 className="text-5xl font-black mt-2 tracking-tighter">
                     {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.totalReceita)}
                   </h2>
@@ -363,17 +338,17 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
               {!hasMonthFinanceData ? (
                 <div className="flex h-full min-h-[176px] flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/25 px-6 text-center">
                   <Wallet className="mb-3 h-10 w-10 text-[#D4AF37]/35" aria-hidden />
-                  <p className="text-sm font-bold text-gray-400">Nenhum lançamento financeiro neste mês</p>
+                  <p className="text-sm font-bold text-gray-400">Nenhum lançamento financeiro confirmado</p>
                   <p className="mt-1 max-w-sm text-xs font-medium leading-relaxed text-gray-600">
-                    Quando houver entradas confirmadas ou saídas no painel financeiro, o gráfico e o resumo serão preenchidos automaticamente.
+                    Quando houver entradas ou saídas confirmadas no painel financeiro, o gráfico e o resumo serão preenchidos automaticamente (inclui datas futuras).
                   </p>
                 </div>
               ) : stats.totalReceita <= 0 ? (
                 <div className="flex h-full min-h-[176px] flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/25 px-6 text-center">
                   <Wallet className="mb-3 h-10 w-10 text-[#D4AF37]/35" aria-hidden />
-                  <p className="text-sm font-bold text-gray-400">Sem receitas confirmadas neste mês</p>
+                  <p className="text-sm font-bold text-gray-400">Sem entradas confirmadas no período carregado</p>
                   <p className="mt-1 max-w-sm text-xs font-medium leading-relaxed text-gray-600">
-                    Baixe mensalidades ou registre entradas no financeiro para ver a evolução aqui.
+                    Registre entradas confirmadas no financeiro para ver a evolução acumulada aqui.
                   </p>
                 </div>
               ) : (
@@ -463,9 +438,9 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
                 {!hasMonthFinanceData ? (
                   <div className="flex min-h-[160px] flex-col items-start justify-center rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-8">
                     <Wallet className="mb-3 h-9 w-9 text-[#D4AF37]/35" aria-hidden />
-                    <p className="text-sm font-bold text-gray-400">Nenhum dado neste mês</p>
+                    <p className="text-sm font-bold text-gray-400">Nenhum dado confirmado</p>
                     <p className="mt-1 max-w-md text-xs font-medium leading-relaxed text-gray-600">
-                      Receitas, despesas e lucro aparecem com base nos lançamentos do mês atual na tabela financeira do terreiro.
+                      Receitas, despesas e lucro somam todos os lançamentos confirmados do terreiro, inclusive com data futura.
                     </p>
                   </div>
                 ) : (
@@ -475,14 +450,14 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
                       <p className="mt-1 text-lg font-black tracking-tighter text-emerald-500">
                         {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.totalReceita)}
                       </p>
-                      <p className="mt-1 text-[10px] font-medium text-gray-600">Entradas confirmadas no mês</p>
+                      <p className="mt-1 text-[10px] font-medium text-gray-600">Entradas confirmadas (total)</p>
                     </div>
                     <div>
                       <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Despesas</p>
                       <p className="mt-1 text-lg font-black tracking-tighter text-rose-500">
                         {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(stats.totalDespesa)}
                       </p>
-                      <p className="mt-1 text-[10px] font-medium text-gray-600">Saídas registradas no mês</p>
+                      <p className="mt-1 text-[10px] font-medium text-gray-600">Saídas confirmadas (total)</p>
                     </div>
                     <div>
                       <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Lucro líquido</p>
