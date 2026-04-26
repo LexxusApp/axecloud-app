@@ -6,11 +6,11 @@ import axios from "axios";
 import { fileURLToPath } from "url";
 import cors from "cors";
 import webpush from "web-push";
-import * as MensZelador from "../src/lib/mensalidadesZeladorApi.ts";
+import * as MensZelador from "../src/lib/mensalidadesZeladorApi";
 import {
   normalizeQueryTenantId,
   resolveFinanceiroTenantScope,
-} from "../src/lib/resolveTenantForFinanceiroApi.ts";
+} from "../src/lib/resolveTenantForFinanceiroApi";
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);
