@@ -1,7 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="AxéCloud">
-  <rect width="512" height="512" rx="112" fill="#0a0a0a"/>
-  <circle cx="256" cy="256" r="186" fill="#fbbc00" opacity="0.14"/>
-  <circle cx="256" cy="256" r="140" fill="none" stroke="#fbbc00" stroke-width="16"/>
-  <text x="256" y="244" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="138" font-weight="900" fill="#ffffff">AXÉ</text>
-  <text x="256" y="330" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="800" letter-spacing="13" fill="#fbbc00">CLOUD</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 192 192" fill="none" role="img" aria-label="AxéCloud">
+  <defs>
+    <linearGradient id="axe512" x1="22" y1="22" x2="170" y2="170" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#059669"/>
+      <stop offset="1" stop-color="#022c22"/>
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" rx="44" fill="url(#axe512)"/>
+  <rect x="16" y="16" width="160" height="160" rx="36" fill="none" stroke="#facc15" stroke-opacity="0.35" stroke-width="2"/>
+  <text x="96" y="124" text-anchor="middle" font-family="Plus Jakarta Sans, system-ui, sans-serif" font-weight="800" font-size="76" fill="#facc15">A</text>
 </svg>
