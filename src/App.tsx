@@ -347,6 +347,7 @@ export default function App() {
             // enquanto os dados do novo usuário ainda estão sendo carregados.
             setUserRole(null);
             setLoading(true);
+            setIsMobileOpen(false);
             // Sempre inicia na Home após sessão válida; evita aba 'profile' órfã (sem filho)
             // da sessão anterior. Filhos de santo são reposicionados em loadAllTenantData.
             const isFilhoAuth = isFilhoIdentity(session.user);
@@ -368,6 +369,7 @@ export default function App() {
           setSelectedChildId(null);
           setFilhoFotoUrl(null);
           setActiveTab('dashboard');
+          setIsMobileOpen(false);
           initializedRef.current = false;
         }
       } catch (error: any) {

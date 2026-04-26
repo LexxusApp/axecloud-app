@@ -388,7 +388,7 @@ export default function Settings({ user, session, tenantData, onRefresh, setActi
                       profile?.nome_terreiro?.[0] || 'Z'
                     )}
                     {photoUploading && (
-                      <div className="absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-sm">
+                      <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
                         <Loader2 className="w-8 h-8 text-primary animate-spin" />
                       </div>
                     )}

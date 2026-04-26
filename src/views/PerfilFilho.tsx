@@ -456,15 +456,7 @@ export default function PerfilFilho({ user, tenantData, setActiveTab }: PerfilFi
   return (
     <div className="px-4 sm:px-6 pt-6 pb-10 space-y-8 animate-in fade-in duration-500 max-w-6xl mx-auto w-full">
       {/* Topo — nome do terreiro (vínculo) + perfil compacto */}
-      <header className="relative overflow-hidden rounded-[2rem] border border-primary/25 bg-gradient-to-b from-[#1a1408]/90 via-[#0c0c0c] to-[#080808] px-6 py-8 sm:px-10 sm:py-10 shadow-[0_0_48px_rgba(251,188,0,0.12)]">
-        <div
-          className="pointer-events-none absolute inset-0 opacity-40"
-          style={{
-            backgroundImage:
-              'radial-gradient(ellipse 80% 50% at 50% -20%, rgba(251,188,0,0.35), transparent), radial-gradient(circle at 100% 100%, rgba(255,255,255,0.04), transparent 45%)',
-          }}
-          aria-hidden
-        />
+      <header className="relative overflow-hidden rounded-[2rem] border border-primary/20 bg-black px-6 py-8 sm:px-10 sm:py-10 shadow-[0_8px_32px_rgba(0,0,0,0.45)]">
         <div className="relative flex flex-col lg:flex-row lg:items-center gap-8 lg:gap-10">
           <div className="flex-1 min-w-0 text-center lg:text-left space-y-3">
             <p className="text-[11px] font-black uppercase tracking-[0.35em] text-primary/90">Terreiro vinculado</p>
@@ -516,7 +508,7 @@ export default function PerfilFilho({ user, tenantData, setActiveTab }: PerfilFi
 
       {/* Mensalidade (PIX) | Próximo evento — colunas com mesma fração e min-w-0 para largura estável */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-stretch [&>section]:min-w-0">
-        <section className="rounded-[2rem] border border-white/10 bg-[#101010]/95 backdrop-blur-xl p-6 sm:p-8 flex flex-col shadow-xl w-full">
+        <section className="rounded-[2rem] border border-white/10 bg-[#101010] p-6 sm:p-8 flex flex-col shadow-lg w-full">
           <div className="flex items-start justify-between gap-4 mb-6">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.28em] text-primary">Mensalidade</p>
@@ -602,7 +594,7 @@ export default function PerfilFilho({ user, tenantData, setActiveTab }: PerfilFi
           </div>
         </section>
 
-        <section className="rounded-[2rem] border border-white/10 bg-[#101010]/95 backdrop-blur-xl p-5 sm:p-6 flex flex-col shadow-xl w-full min-h-0 min-w-0">
+        <section className="rounded-[2rem] border border-white/10 bg-[#101010] p-5 sm:p-6 flex flex-col shadow-lg w-full min-h-0 min-w-0">
           <div className="flex items-center justify-between gap-3 mb-4 shrink-0">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.28em] text-primary">Giras & eventos</p>
@@ -741,7 +733,7 @@ export default function PerfilFilho({ user, tenantData, setActiveTab }: PerfilFi
               ))}
             </div>
           ) : sortedNotices.length === 0 ? (
-            <div className="w-full rounded-2xl border border-white/5 bg-black/30 backdrop-blur-xl py-10 px-4 text-center space-y-3">
+            <div className="w-full rounded-2xl border border-white/5 bg-black py-10 px-4 text-center space-y-3">
               <div className="w-14 h-14 rounded-2xl bg-white/5 flex items-center justify-center mx-auto">
                 <Info className="w-7 h-7 text-gray-500" />
               </div>
@@ -762,7 +754,7 @@ export default function PerfilFilho({ user, tenantData, setActiveTab }: PerfilFi
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: idx * 0.05 }}
                   className={cn(
-                    'rounded-2xl border bg-black/50 backdrop-blur-xl overflow-hidden shadow-lg',
+                    'rounded-2xl border bg-[#141414] overflow-hidden shadow-md',
                     notice.categoria === 'Urgente'
                       ? 'border-red-500/25 shadow-red-500/5'
                       : 'border-white/10'
@@ -815,7 +807,7 @@ export default function PerfilFilho({ user, tenantData, setActiveTab }: PerfilFi
           )}
         </section>
 
-        <section className="lg:col-span-8 min-w-0 min-h-0 flex flex-col rounded-[2rem] border border-white/10 bg-[#101010]/95 backdrop-blur-xl p-4 sm:p-5 shadow-xl lg:min-h-[min(560px,62vh)]">
+        <section className="lg:col-span-8 min-w-0 min-h-0 flex flex-col rounded-[2rem] border border-white/10 bg-[#101010] p-4 sm:p-5 shadow-lg lg:min-h-[min(560px,62vh)]">
           <Library
             user={user}
             userRole="filho"
