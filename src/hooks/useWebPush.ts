@@ -2,7 +2,12 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 
 const VAPID_PUBLIC_KEY = "BEKar2pRRjBhX5Pz-EtX1QT07JbDBhSBx_-t5mAPZ3TevskbdG0w9JJNz-TbR-TzuIigtXTg27vCX_8GElZUM7Y";
 
-export function useWebPush(userId: string | null, tenantId: string | null) {
+export function useWebPush(
+  userId: string | null,
+  tenantId: string | null,
+  /** Só filhos de santo devem registrar push; gestores não solicitam permissão. */
+  enabled: boolean = true
+) {
   const [permission, setPermission] = useState<NotificationPermission>(
     typeof window !== 'undefined' ? Notification.permission : 'default'
   );
@@ -26,6 +31,7 @@ export function useWebPush(userId: string | null, tenantId: string | null) {
   };
 
   const subscribe = useCallback(async () => {
+    if (!enabled) return;
     if (!userId || !tenantId) return;
     if (hasFailed.current) return; // Não tenta novamente após falha
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -79,7 +85,7 @@ export function useWebPush(userId: string | null, tenantId: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [userId, tenantId]);
+  }, [userId, tenantId, enabled]);
 
   useEffect(() => {
     // Reseta tentativas quando o usuário muda (ex.: logout/login com outra conta)
@@ -92,8 +98,9 @@ export function useWebPush(userId: string | null, tenantId: string | null) {
   }, [userId]);
 
   useEffect(() => {
-    // Auto-subscribe apenas 1 vez se já tiver permissão — sem loops
+    // Auto-subscribe apenas 1 vez se já tiver permissão — sem loops (somente quando push está habilitado p/ o papel atual)
     if (
+      enabled &&
       permission === 'granted' &&
       userId &&
       tenantId &&
@@ -104,7 +111,7 @@ export function useWebPush(userId: string | null, tenantId: string | null) {
       hasAttempted.current = true;
       subscribe();
     }
-  }, [permission, userId, tenantId, isSubscribed, subscribe]);
+  }, [enabled, permission, userId, tenantId, isSubscribed, subscribe]);
 
   return {
     permission: hasFailed.current ? 'denied' as NotificationPermission : permission,

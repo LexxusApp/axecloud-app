@@ -757,6 +757,18 @@ async function startServer() {
     }
 
     try {
+      const { data: um, error: umErr } = await supabaseAdmin.auth.admin.getUserById(userId);
+      if (umErr) throw umErr;
+      const metaRole = String(um?.user?.user_metadata?.role || '').toLowerCase();
+      const { data: filhoRow } = await supabaseAdmin
+        .from('filhos_de_santo')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (metaRole !== 'filho' && !filhoRow) {
+        return res.status(403).json({ error: 'Apenas filhos de santo podem ativar notificações push.' });
+      }
+
       const { error } = await supabaseAdmin
         .from('push_subscriptions')
         .upsert({
@@ -774,18 +786,27 @@ async function startServer() {
     }
   });
 
-  // Helper: Enviar Notificação Push
-  async function sendPushNotification(tenantId: string, payload: { title: string, body: string, url: string }) {
+  // Helper: enviar push apenas para filhos de santo (tabela push_subscriptions por user_id)
+  async function sendPushNotification(tenantId: string, payload: { title: string; body: string; url: string }) {
     try {
+      const resolvedTenant = await resolveLeaderId(tenantId);
+      const { data: filhos, error: filhosErr } = await supabaseAdmin
+        .from('filhos_de_santo')
+        .select('user_id')
+        .or(`tenant_id.eq.${resolvedTenant},lider_id.eq.${resolvedTenant},tenant_id.eq.${tenantId},lider_id.eq.${tenantId}`);
+      if (filhosErr) throw filhosErr;
+      const userIds = [...new Set((filhos || []).map((f: any) => f.user_id).filter(Boolean))];
+      if (userIds.length === 0) return;
+
       const { data: subscriptions, error } = await supabaseAdmin
         .from('push_subscriptions')
         .select('subscription_object')
-        .eq('tenant_id', tenantId);
+        .in('user_id', userIds);
 
       if (error) throw error;
       if (!subscriptions || subscriptions.length === 0) return;
 
-      console.log(`[PUSH] Enviando notificação para ${subscriptions.length} inscritos no tenant ${tenantId}`);
+      console.log(`[PUSH] Enviando para ${subscriptions.length} inscrição(ões) de filhos do terreiro`);
 
       const pushPromises = subscriptions.map((sub: any) => {
         return webpush.sendNotification(
@@ -793,7 +814,6 @@ async function startServer() {
           JSON.stringify(payload)
         ).catch(err => {
           if (err.statusCode === 410 || err.statusCode === 404) {
-            // Inscrição expirada ou inválida, remover do banco
             console.log("[PUSH] Removendo inscrição inválida");
             return supabaseAdmin
               .from('push_subscriptions')
@@ -941,12 +961,6 @@ async function startServer() {
         .single();
 
       if (error) throw error;
-
-      sendPushNotification(tenantId, {
-        title: `Novo Item no Almoxarifado`,
-        body: `${item}: ${quantidade_atual} unidades`,
-        url: '/almoxarifado'
-      });
 
       res.json({ success: true, data: inventoryItem });
     } catch (error: any) {
@@ -2236,11 +2250,11 @@ async function startServer() {
 
       if (error) throw error;
 
-      // 2. Disparar Push para o Terreiro
+      // Push apenas para filhos de santo inscritos
       sendPushNotification(profile?.tenant_id || user.id, {
-        title: `Novo Evento: ${req.body.titulo}`,
+        title: `Novo evento: ${req.body.titulo}`,
         body: `${req.body.data} às ${req.body.hora}`,
-        url: '/calendario'
+        url: '/calendar'
       });
 
       res.json({ success: true, data });

@@ -1143,6 +1143,43 @@ async function startServer() {
     return data?.id || idOrTenantId;
   }
 
+  /** Web push só para filhos de santo (assinaturas em user_metadata.push_subscriptions). */
+  async function sendWebPushToFilhosDoTerreiro(
+    tenantId: string,
+    payload: { title: string; body: string; url: string }
+  ): Promise<number> {
+    const resolvedTenant = await resolveLeaderId(tenantId);
+    const { data: filhos, error: filhosError } = await supabaseAdmin
+      .from('filhos_de_santo')
+      .select('user_id')
+      .or(`tenant_id.eq.${resolvedTenant},lider_id.eq.${resolvedTenant},tenant_id.eq.${tenantId},lider_id.eq.${tenantId}`);
+    if (filhosError) throw filhosError;
+    const userIdSet = new Set((filhos || []).map((f: any) => f.user_id).filter(Boolean));
+    if (userIdSet.size === 0) return 0;
+
+    const { data: usersData, error: usersError } = await supabaseAdmin.auth.admin.listUsers();
+    if (usersError) throw usersError;
+
+    let sentCount = 0;
+    for (const u of usersData.users) {
+      if (!userIdSet.has(u.id)) continue;
+      const subs = u.user_metadata?.push_subscriptions || [];
+      for (const sub of subs) {
+        try {
+          await webpush.sendNotification(sub, JSON.stringify(payload));
+          sentCount++;
+        } catch (e: any) {
+          if (e.statusCode === 410 || e.statusCode === 404) {
+            console.log('[SERVER] Push subscription expirada (filho):', u.id);
+          } else {
+            console.error('[SERVER] Push send error:', e);
+          }
+        }
+      }
+    }
+    return sentCount;
+  }
+
   /** mural_avisos.tenant_id costuma referenciar perfil_lider(id), não auth.users — sem linha em perfil_lider a FK quebra. */
   async function ensurePerfilLiderForMural(user: { id: string; email?: string | null }) {
     if (!user?.id) return;
@@ -2567,6 +2604,17 @@ async function startServer() {
         .single();
 
       if (error) throw error;
+
+      try {
+        await sendWebPushToFilhosDoTerreiro(profile?.tenant_id || user.id, {
+          title: `Novo evento: ${req.body.titulo}`,
+          body: `${req.body.data} às ${req.body.hora}`,
+          url: '/calendar',
+        });
+      } catch (pushErr: any) {
+        console.error('[SERVER] Push após criar evento:', pushErr?.message || pushErr);
+      }
+
       res.json({ success: true, data });
     } catch (error: any) {
       console.error("[SERVER] Error creating event:", error.message || error);
@@ -2735,6 +2783,18 @@ async function startServer() {
           },
         });
       }
+
+      try {
+        const pushTenant = inserted?.tenant_id || logicalTenant;
+        await sendWebPushToFilhosDoTerreiro(pushTenant, {
+          title: `📢 ${titulo}`,
+          body: (conteudo || '').substring(0, 120),
+          url: '/mural',
+        });
+      } catch (pushErr: any) {
+        console.error('[SERVER] Push após mural:', pushErr?.message || pushErr);
+      }
+
       res.json({ data: inserted });
     } catch (error: any) {
       console.error("[SERVER] Error creating notice:", error.message || error);
@@ -3012,6 +3072,16 @@ async function startServer() {
       const { data: userData, error: userError } = await supabaseAdmin.auth.admin.getUserById(userId);
       if (userError) throw userError;
 
+      const metaRole = String(userData.user.user_metadata?.role || '').toLowerCase();
+      const { data: filhoVinculo } = await supabaseAdmin
+        .from('filhos_de_santo')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (metaRole !== 'filho' && !filhoVinculo) {
+        return res.status(403).json({ error: 'Apenas filhos de santo podem ativar notificações push.' });
+      }
+
       const currentPushSubs = userData.user.user_metadata?.push_subscriptions || [];
       
       // Prevent duplicates by checking if endpoint already exists
@@ -3050,45 +3120,7 @@ async function startServer() {
         return res.status(400).json({ error: "Missing tenantId" });
       }
 
-      const resolvedTenant = await resolveLeaderId(tenantId);
-
-      // Find all users connected to this tenant (we will search `filhos_de_santo` to get their `user_id`s)
-      const { data: filhos, error: filhosError } = await supabaseAdmin
-        .from('filhos_de_santo')
-        .select('user_id')
-        .or(`tenant_id.eq.${resolvedTenant},lider_id.eq.${resolvedTenant},tenant_id.eq.${tenantId},lider_id.eq.${tenantId}`);
-        
-      if (filhosError) throw filhosError;
-      
-      const userIds = filhos.map((f: any) => f.user_id).filter(Boolean);
-      
-      // Include the tenant admin / requester as well, so they get it
-      // Let's just fetch ALL users and filter by their metadata matching the tenant,
-      // or we can just filter users by the IDs we collected.
-      
-      const { data: usersData, error: usersError } = await supabaseAdmin.auth.admin.listUsers();
-      if (usersError) throw usersError;
-
-      const targetUsers = usersData.users.filter((u: any) => userIds.includes(u.id) || u.user_metadata?.tenant_id === tenantId);
-      
-      let sentCount = 0;
-      
-      for (const user of targetUsers) {
-        const subs = user.user_metadata?.push_subscriptions || [];
-        for (const sub of subs) {
-          try {
-            await webpush.sendNotification(sub, JSON.stringify({ title, body, url }));
-            sentCount++;
-          } catch (e: any) {
-            if (e.statusCode === 410 || e.statusCode === 404) {
-              console.log("[SERVER] Removing expired push subscription for user", user.id);
-              // Clean up could happen here
-            } else {
-              console.error("[SERVER] Push send error:", e);
-            }
-          }
-        }
-      }
+      const sentCount = await sendWebPushToFilhosDoTerreiro(tenantId, { title, body, url });
 
       res.json({ success: true, sentCount });
     } catch (error: any) {

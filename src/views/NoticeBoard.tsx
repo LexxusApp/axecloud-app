@@ -181,23 +181,6 @@ export default function NoticeBoard({ isAdmin, tenantData, setActiveTab }: { isA
       }
       
       setLastPostedNotice({ titulo: formData.titulo, conteudo: formData.conteudo });
-      
-      // Push automático para todos os filhos de santo do terreiro
-      try {
-        fetch('/api/push-broadcast', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`
-          },
-          body: JSON.stringify({
-            tenantId: tenantId || user.id,
-            title: `📢 ${formData.titulo}`,
-            body: formData.conteudo.substring(0, 120),
-            url: '/mural'
-          })
-        }).catch(() => {/* push é best-effort, não bloqueia o fluxo */});
-      } catch { /* ignora falha de push */ }
 
       setIsModalOpen(false);
       setShowSuccessModal(true);

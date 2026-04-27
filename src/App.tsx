@@ -102,9 +102,11 @@ export default function App() {
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const [filhoFotoUrl, setFilhoFotoUrl] = useState<string | null>(null);
 
+  const isFilhoForPush = userRole === 'filho';
   const { permission, subscribe, loading: pushLoading } = useWebPush(
     session?.user?.id || null,
-    tenantData?.tenant_id || null
+    tenantData?.tenant_id || null,
+    isFilhoForPush
   );
 
   const initializedRef = useRef(false);
@@ -843,8 +845,8 @@ export default function App() {
         {/* Main Content Area with Scroll */}
         <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
           <main className={cn("flex min-h-full w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-[#121212]/80 backdrop-blur-[2px] lg:pb-0", userRole !== 'filho' ? "pb-24" : "pb-6")} data-role={userRole ?? undefined}>
-            {/* Notification Prompt for PWA */}
-            {permission === 'default' && session && (
+            {/* Notificações push: apenas filhos de santo (avisos do mural e agenda do zelador) */}
+            {userRole === 'filho' && permission === 'default' && session && (
               <div className="bg-primary/10 border border-primary/20 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 mb-6">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-primary/20 flex items-center justify-center">
