@@ -45,6 +45,8 @@ export default defineConfig(({mode}) => {
           ],
         },
         workbox: {
+          /** Bump ao mudar estratégia de cache — força precache/runtime novos e abandona caches antigos (cleanupOutdatedCaches). */
+          cacheId: 'axecloud-v2',
           cleanupOutdatedCaches: true,
           importScripts: ['/sw-push.js'],
           // Evita que o fallback do SPA (index.html) intercepte navegação para /api/*
@@ -56,7 +58,7 @@ export default defineConfig(({mode}) => {
               handler: 'NetworkFirst',
               method: 'GET',
               options: {
-                cacheName: 'axecloud-api-network-first',
+                cacheName: 'axecloud-api-network-first-v2',
                 networkTimeoutSeconds: 12,
                 expiration: {
                   maxEntries: 80,

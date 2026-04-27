@@ -37,6 +37,7 @@ import {
 import { resolveTenantFromSupabase } from './lib/resolveTenantFromSupabase';
 import { PwaInstallTopbarButton } from './components/PwaInstallTopbarButton';
 import { performFastLogout, performVersionBumpLogout } from './lib/logout';
+import { performEmergencyHardReload } from './lib/emergencyReload';
 
 const SYSTEM_VERSION = APP_VERSION; // force logout on update
 
@@ -84,6 +85,8 @@ export default function App() {
   );
 
   const initializedRef = useRef(false);
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
 
   /** Login vive na raiz "/"; "/login" só espelha a SPA — normaliza a URL sem recarregar. */
   useLayoutEffect(() => {
@@ -431,6 +434,41 @@ export default function App() {
       setActiveTab('profile');
     }
   }, [userRole, activeTab]);
+
+  /** Loading infinito (bundle/SW antigo ou sessão inconsistente): uma recarga forçada por sessão de aba. */
+  useEffect(() => {
+    if (!loading) {
+      try {
+        sessionStorage.removeItem('axecloud_stuck_reload_once');
+      } catch {
+        /* */
+      }
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      if (!loadingRef.current) return;
+      try {
+        if (sessionStorage.getItem('axecloud_stuck_reload_once') === '1') return;
+      } catch {
+        /* */
+      }
+      const {
+        data: { session: s },
+      } = await supabase.auth.getSession();
+      if (!s?.user) {
+        console.warn('[SYSTEM] Loading prolongado com sessão vazia — recarga de emergência.');
+      } else {
+        console.warn('[SYSTEM] Loading prolongado — recarga de emergência (cache/SW).');
+      }
+      try {
+        sessionStorage.setItem('axecloud_stuck_reload_once', '1');
+      } catch {
+        /* */
+      }
+      performEmergencyHardReload();
+    }, 32000);
+    return () => window.clearTimeout(timer);
+  }, [loading]);
 
   const refreshAllData = async (newData?: { nome_terreiro?: string; foto_url?: string; cargo?: string | null }) => {
     if (session?.user) {

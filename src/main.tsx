@@ -2,6 +2,7 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import {registerSW} from 'virtual:pwa-register';
 import {PwaInstallProvider} from './contexts/PwaInstallContext';
+import {EmergencyReloadBeacon} from './components/EmergencyReloadBeacon';
 import App from './App.tsx';
 import './index.css';
 
@@ -41,6 +42,7 @@ document.addEventListener('visibilitychange', () => {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <PwaInstallProvider>
+      <EmergencyReloadBeacon />
       <App />
     </PwaInstallProvider>
   </StrictMode>,
