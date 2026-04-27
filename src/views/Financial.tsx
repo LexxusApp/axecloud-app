@@ -14,8 +14,20 @@ import {
   normalizeMovimentoTipo,
   parseFinanceiroDataRef,
 } from '../lib/financeiroSaldo';
-import type { MensalidadeZeladorRow } from '@/api/mensalidadeszeladorapi';
 import { resolveTenantIdForFinance } from '../lib/tenantCache';
+
+type MensalidadeZeladorRow = {
+  id: string;
+  filho_id: string | null;
+  valor: number;
+  data: string;
+  data_vencimento?: string | null;
+  status: string | null;
+  descricao: string | null;
+  categoria: string | null;
+  tipo?: string | null;
+  filhos_de_santo?: { nome: string } | null;
+};
 
 const FINANCE_UPDATED_EVENT = 'axecloud:finance-updated';
 
