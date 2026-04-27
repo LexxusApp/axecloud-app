@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, Clock, Moon, Star, Bell, Loader2, X, CheckCircle2, Ticket, User, Search, UserPlus, Lock, Smartphone, MessageSquare } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, Clock, Moon, Star, Bell, Loader2, X, CheckCircle2, Ticket, User, Search, UserPlus, Lock, Smartphone, MessageSquare, ImagePlus } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, parseISO, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,6 +18,20 @@ interface Event {
   tipo: string;
   descricao: string;
   status_confirmacao: string;
+  banner_url?: string | null;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const r = reader.result as string;
+      const i = r.indexOf(',');
+      resolve(i >= 0 ? r.slice(i + 1) : r);
+    };
+    reader.onerror = () => reject(new Error('Falha ao ler o arquivo'));
+    reader.readAsDataURL(file);
+  });
 }
 
 interface Guest {
@@ -63,6 +77,10 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
   const [itemToDelete, setItemToDelete] = useState<{ id: string, type: 'event' | 'guest' | 'task', title?: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isNotifying, setIsNotifying] = useState<string | null>(null);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
+  const [bannerFile, setBannerFile] = useState<File | null>(null);
+  const [bannerPreview, setBannerPreview] = useState<string | null>(null);
+  const [filhoEventDetail, setFilhoEventDetail] = useState<Event | null>(null);
 
   const hasAccess = hasPlanAccess(tenantData?.plan, 'gestao_eventos', tenantData?.is_admin_global);
   const effectiveTenantId = tenantData?.tenant_id || (!isFilho ? user?.id : undefined);
@@ -122,6 +140,16 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
       setActiveModalTab('guests');
     }
   }, [selectedEventForGuests]);
+
+  useEffect(() => {
+    if (!isModalOpen) {
+      setBannerFile(null);
+      setBannerPreview((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+    }
+  }, [isModalOpen]);
 
   async function fetchChildren() {
     if (!effectiveTenantId) return;
@@ -386,13 +414,37 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
     e.preventDefault();
     setIsSubmitting(true);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      let banner_url: string | undefined;
+      if (bannerFile && effectiveTenantId) {
+        const fileData = await fileToBase64(bannerFile);
+        const uploadRes = await fetch('/api/v1/event-banner', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`
+          },
+          body: JSON.stringify({
+            fileData,
+            fileName: bannerFile.name,
+            contentType: bannerFile.type,
+            tenantId: effectiveTenantId,
+          }),
+        });
+        const uploadJson = await uploadRes.json().catch(() => ({}));
+        if (!uploadRes.ok) {
+          throw new Error(uploadJson.error || 'Falha ao enviar o banner');
+        }
+        if (uploadJson.publicUrl) banner_url = uploadJson.publicUrl;
+      }
+
       const eventData = {
         ...formData,
+        ...(banner_url ? { banner_url } : {}),
         lider_id: user?.id,
         tenant_id: effectiveTenantId || user?.id
       };
 
-      const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch('/api/events', {
         method: 'POST',
         headers: {
@@ -677,55 +729,74 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
                   {upcomingEvents.map((event, idx) => {
                     const passed = isEventPassed(event.data, event.hora);
                     return (
-                      <motion.div
+                      <motion.button
+                        type="button"
                         key={event.id}
                         initial={{ opacity: 0, y: 12 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: idx * 0.04 }}
+                        onClick={() => setFilhoEventDetail(event)}
                         className={cn(
-                          "card-luxury p-5 border-l-4 transition-all",
+                          "card-luxury w-full text-left overflow-hidden border-l-4 transition-all hover:border-primary/80 hover:shadow-lg hover:shadow-primary/5",
                           passed ? "border-l-gray-600 opacity-60" : "border-l-primary"
                         )}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1 flex-wrap">
-                              <span className={cn(
-                                "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full",
-                                passed ? "bg-gray-600/20 text-gray-500" : "bg-primary/10 text-primary"
-                              )}>
-                                {event.tipo}
-                              </span>
-                              {passed && (
-                                <span className="text-[10px] font-black text-red-400 uppercase tracking-widest bg-red-500/10 px-2 py-0.5 rounded-full">
-                                  Encerrado
-                                </span>
-                              )}
+                        <div className="relative h-28 w-full overflow-hidden bg-[#0d0d0d]">
+                          {event.banner_url ? (
+                            <img
+                              src={event.banner_url}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary/15 to-transparent">
+                              <CalendarIcon className="h-10 w-10 text-white/15" />
                             </div>
-                            <h4 className="font-black text-white text-base leading-tight">{event.titulo}</h4>
-                            {event.descricao && (
-                              <p className="text-xs text-gray-500 mt-1 line-clamp-2 leading-relaxed">{event.descricao}</p>
+                          )}
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent pointer-events-none" />
+                          <div className="absolute bottom-2 left-2 right-2 flex flex-wrap items-center gap-1.5">
+                            <span className={cn(
+                              "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full backdrop-blur-sm",
+                              passed ? "bg-black/50 text-gray-400" : "bg-primary/90 text-black"
+                            )}>
+                              {event.tipo}
+                            </span>
+                            {passed && (
+                              <span className="text-[10px] font-black text-red-300 uppercase tracking-widest bg-red-500/80 backdrop-blur-sm px-2 py-0.5 rounded-full">
+                                Encerrado
+                              </span>
                             )}
                           </div>
-                          <div className="shrink-0 text-right">
-                            <div className="text-xs font-black text-white">
-                              {format(parseISO(event.data), 'dd/MM', { locale: ptBR })}
+                        </div>
+                        <div className="p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-black text-white text-base leading-tight">{event.titulo}</h4>
+                              {event.descricao && (
+                                <p className="text-xs text-gray-500 mt-1 line-clamp-2 leading-relaxed">{event.descricao}</p>
+                              )}
                             </div>
-                            <div className="text-[10px] font-bold text-gray-500">{event.hora}</div>
+                            <div className="shrink-0 text-right">
+                              <div className="text-xs font-black text-white">
+                                {format(parseISO(event.data), 'dd/MM', { locale: ptBR })}
+                              </div>
+                              <div className="text-[10px] font-bold text-gray-500">{event.hora}</div>
+                            </div>
                           </div>
+                          <div className="flex items-center gap-3 mt-3 pt-3 border-t border-white/5 text-gray-600 text-[10px] font-bold uppercase tracking-wider flex-wrap">
+                            <div className="flex items-center gap-1">
+                              <CalendarIcon className="w-3 h-3" />
+                              {format(parseISO(event.data), "EEEE, dd 'de' MMMM", { locale: ptBR })}
+                            </div>
+                            <span>·</span>
+                            <div className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {event.hora}
+                            </div>
+                          </div>
+                          <p className="text-[10px] font-bold text-primary/80 mt-2 uppercase tracking-widest">Toque para ver detalhes</p>
                         </div>
-                        <div className="flex items-center gap-3 mt-3 pt-3 border-t border-white/5 text-gray-600 text-[10px] font-bold uppercase tracking-wider flex-wrap">
-                          <div className="flex items-center gap-1">
-                            <CalendarIcon className="w-3 h-3" />
-                            {format(parseISO(event.data), "EEEE, dd 'de' MMMM", { locale: ptBR })}
-                          </div>
-                          <span>·</span>
-                          <div className="flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {event.hora}
-                          </div>
-                        </div>
-                      </motion.div>
+                      </motion.button>
                     );
                   })}
                 </div>
@@ -733,6 +804,79 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
             </div>
           </div>
         </div>
+
+        <AnimatePresence>
+          {filhoEventDetail && (
+            <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setFilhoEventDetail(null)}
+                className="absolute inset-0 bg-background/80 backdrop-blur-xl"
+              />
+              <motion.div
+                initial={{ opacity: 0, y: 60 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 60 }}
+                transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-card shadow-2xl sm:max-w-lg sm:rounded-3xl"
+              >
+                <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-4 sm:px-6">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
+                      <CalendarIcon className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="truncate text-base font-black text-white sm:text-lg">{filhoEventDetail.titulo}</h3>
+                      <p className="text-xs font-medium uppercase tracking-widest text-gray-500">{filhoEventDetail.tipo}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFilhoEventDetail(null)}
+                    className="shrink-0 rounded-xl p-2 text-gray-500 transition-colors hover:bg-white/5"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {filhoEventDetail.banner_url && (
+                    <div className="relative w-full overflow-hidden bg-[#0d0d0d]">
+                      <img
+                        src={filhoEventDetail.banner_url}
+                        alt=""
+                        className="max-h-[min(40vh,280px)] w-full object-cover"
+                      />
+                    </div>
+                  )}
+                  <div className="space-y-4 px-5 py-4 sm:px-6 sm:py-5">
+                    <div className="flex flex-wrap gap-3 text-sm">
+                      <div className="flex items-center gap-2 text-white">
+                        <CalendarIcon className="h-4 w-4 shrink-0 text-primary" />
+                        <span className="font-bold">
+                          {format(parseISO(filhoEventDetail.data), "EEEE, dd 'de' MMMM yyyy", { locale: ptBR })}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-white">
+                        <Clock className="h-4 w-4 shrink-0 text-primary" />
+                        <span className="font-bold">{filhoEventDetail.hora}</span>
+                      </div>
+                    </div>
+                    {filhoEventDetail.descricao ? (
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1">Descrição</p>
+                        <p className="text-sm leading-relaxed text-gray-300 whitespace-pre-wrap">{filhoEventDetail.descricao}</p>
+                      </div>
+                    ) : (
+                      <p className="text-sm italic text-gray-600">Sem descrição adicional.</p>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
     );
   }
@@ -989,52 +1133,70 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
               {eventsSorted.map(event => {
                 const passed = isEventPassed(event.data, event.hora);
                 return (
-                <div key={event.id} className={cn("card-luxury p-6 border-l-4 flex flex-col h-full", passed ? "border-l-gray-500 opacity-75" : "border-l-primary")}>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <span className={cn("text-xs font-black uppercase tracking-widest px-3 py-1 rounded-full", passed ? "text-gray-400 bg-gray-500/10" : "text-primary bg-primary/10")}>{event.tipo}</span>
-                      {passed && <span className="text-xs font-black text-red-400 uppercase tracking-widest bg-red-500/10 px-3 py-1 rounded-full">Encerrado</span>}
-                    </div>
-                    {isAdmin && (
-                      <div className="flex gap-2">
-                        {!passed && (
-                          <button 
-                            onClick={() => handleNotifyAll(event)}
-                            disabled={isNotifying === event.id}
-                            className="p-2 bg-[#FBBC00]/10 hover:bg-[#FBBC00]/20 rounded-xl text-[#FBBC00] transition-colors flex items-center justify-center disabled:opacity-50"
-                            title="Notificar todos os filhos"
-                          >
-                            {isNotifying === event.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bell className="w-4 h-4" />}
-                          </button>
-                        )}
-                        <button 
-                          onClick={() => {
-                            setSelectedEventForGuests(event);
-                          }}
-                          className="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-primary transition-colors"
-                          title="Gestão de Convidados"
-                        >
-                          <Ticket className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => setItemToDelete({ id: event.id, type: 'event', title: event.titulo })}
-                          className="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-gray-500 hover:text-red-500 transition-colors"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
+                <div key={event.id} className={cn("card-luxury overflow-hidden border-l-4 flex flex-col h-full p-0", passed ? "border-l-gray-500 opacity-75" : "border-l-primary")}>
+                  <div className="relative h-40 w-full shrink-0 overflow-hidden bg-[#0d0d0d]">
+                    {event.banner_url ? (
+                      <img src={event.banner_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary/15 to-transparent">
+                        <CalendarIcon className="h-12 w-12 text-white/15" />
                       </div>
                     )}
+                    <span className="absolute top-2 left-2 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border border-white/10 bg-black/60 backdrop-blur-sm text-primary">
+                      {event.tipo}
+                    </span>
+                    {passed && (
+                      <span className="absolute top-2 right-2 text-[10px] font-black text-red-300 uppercase tracking-widest bg-red-500/80 backdrop-blur-sm px-2 py-0.5 rounded-md">
+                        Encerrado
+                      </span>
+                    )}
                   </div>
-                  <h4 className="font-bold text-white text-xl mb-2">{event.titulo}</h4>
-                  <div className="text-gray-400 text-sm mb-4 line-clamp-2 flex-1">{event.descricao || 'Sem descrição.'}</div>
-                  <div className="flex items-center gap-4 text-gray-500 text-sm font-medium pt-4 border-t border-white/5">
-                    <div className="flex items-center gap-1.5">
-                      <CalendarIcon className="w-4 h-4" />
-                      {format(parseISO(event.data), 'dd/MM/yyyy')}
+                  <div className="flex flex-col flex-1 p-5 min-w-0">
+                    <div className="flex items-start justify-between gap-2 mb-3">
+                      <h4 className="font-bold text-white text-lg leading-tight line-clamp-2 flex-1 min-w-0">{event.titulo}</h4>
+                      {isAdmin && (
+                        <div className="flex gap-1 shrink-0">
+                          {!passed && (
+                            <button 
+                              type="button"
+                              onClick={() => handleNotifyAll(event)}
+                              disabled={isNotifying === event.id}
+                              className="p-2 bg-[#FBBC00]/10 hover:bg-[#FBBC00]/20 rounded-xl text-[#FBBC00] transition-colors flex items-center justify-center disabled:opacity-50"
+                              title="Notificar todos os filhos"
+                            >
+                              {isNotifying === event.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bell className="w-4 h-4" />}
+                            </button>
+                          )}
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              setSelectedEventForGuests(event);
+                            }}
+                            className="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-primary transition-colors"
+                            title="Gestão de Convidados"
+                          >
+                            <Ticket className="w-4 h-4" />
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => setItemToDelete({ id: event.id, type: 'event', title: event.titulo })}
+                            className="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-gray-500 hover:text-red-500 transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-4 h-4" />
-                      {event.hora}
+                    <div className="text-gray-400 text-sm mb-4 line-clamp-2 flex-1">{event.descricao || 'Sem descrição.'}</div>
+                    <div className="flex items-center gap-4 text-gray-500 text-sm font-medium pt-4 border-t border-white/5 mt-auto">
+                      <div className="flex items-center gap-1.5">
+                        <CalendarIcon className="w-4 h-4 shrink-0" />
+                        {format(parseISO(event.data), 'dd/MM/yyyy')}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-4 h-4 shrink-0" />
+                        {event.hora}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1120,6 +1282,65 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
                     onChange={(e) => setFormData({ ...formData, descricao: e.target.value })}
                     className="w-full resize-none rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-white outline-none transition-all focus:border-primary"
                     placeholder="Detalhes do evento..." />
+                </div>
+
+                <div className="space-y-2 rounded-xl border border-white/5 bg-white/[0.02] p-3">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 ml-0.5">Banner do evento (opcional)</label>
+                  <input
+                    ref={bannerInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      if (!f.type.startsWith('image/')) {
+                        alert('Selecione um arquivo de imagem.');
+                        return;
+                      }
+                      if (f.size > 4.5 * 1024 * 1024) {
+                        alert('Imagem muito grande (máx. 4,5 MB).');
+                        return;
+                      }
+                      setBannerFile(f);
+                      setBannerPreview((prev) => {
+                        if (prev) URL.revokeObjectURL(prev);
+                        return URL.createObjectURL(f);
+                      });
+                      e.target.value = '';
+                    }}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => bannerInputRef.current?.click()}
+                      className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-black uppercase tracking-widest text-white transition-all hover:bg-white/10"
+                    >
+                      <ImagePlus className="h-4 w-4 text-primary" />
+                      Escolher imagem
+                    </button>
+                    {bannerPreview && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBannerFile(null);
+                          setBannerPreview((prev) => {
+                            if (prev) URL.revokeObjectURL(prev);
+                            return null;
+                          });
+                        }}
+                        className="rounded-xl px-3 py-2 text-xs font-bold text-gray-500 hover:text-red-400"
+                      >
+                        Remover
+                      </button>
+                    )}
+                  </div>
+                  {bannerPreview && (
+                    <div className="relative mt-1 overflow-hidden rounded-xl border border-white/10">
+                      <img src={bannerPreview} alt="" className="max-h-36 w-full object-cover" />
+                    </div>
+                  )}
+                  <p className="text-[10px] text-gray-600 leading-relaxed">JPEG, PNG, WebP ou GIF. Aparece na gestão de eventos e para os filhos de santo.</p>
                 </div>
 
                 <div className="flex gap-3 pt-2">

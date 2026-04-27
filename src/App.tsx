@@ -289,7 +289,7 @@ export default function App() {
 
       if (lastVersion !== SYSTEM_VERSION) {
         console.log('[SYSTEM] Nova versão detectada:', SYSTEM_VERSION);
-        performVersionBumpLogout(SYSTEM_VERSION);
+        void performVersionBumpLogout(SYSTEM_VERSION);
       }
     };
 

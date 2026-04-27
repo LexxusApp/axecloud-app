@@ -1467,6 +1467,61 @@ async function startServer() {
     }
   });
 
+  /** Banner de evento — upload para o mesmo bucket da biblioteca (pasta event_banners por tenant). */
+  app.post("/api/v1/event-banner", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    const { fileData, fileName, contentType, tenantId } = req.body;
+    if (!authHeader || !fileData || !tenantId) {
+      return res.status(400).json({ error: "Dados incompletos" });
+    }
+
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Unauthorized" });
+
+      const { data: profile } = await supabaseAdmin
+        .from("perfil_lider")
+        .select("tenant_id")
+        .eq("id", user.id)
+        .single();
+
+      const allowedTenant = profile?.tenant_id || user.id;
+      if (tenantId !== allowedTenant) {
+        return res.status(403).json({ error: "Sem permissão para este terreiro" });
+      }
+
+      const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+      const ct = String(contentType || "image/jpeg").toLowerCase();
+      if (!allowedTypes.includes(ct)) {
+        return res.status(400).json({ error: "Use imagem JPEG, PNG, WebP ou GIF" });
+      }
+
+      const buffer = Buffer.from(fileData, "base64");
+      if (buffer.length > 5 * 1024 * 1024) {
+        return res.status(400).json({ error: "Imagem muito grande (máx. 5 MB)" });
+      }
+
+      const safeName = slugifyStoragePath(fileName || "banner.jpg");
+      const storagePath = `${tenantId}/event_banners/${Date.now()}_${safeName}`;
+
+      const { error: uploadError } = await supabaseAdmin.storage
+        .from("biblioteca_estudos")
+        .upload(storagePath, buffer, { contentType: ct, upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const {
+        data: { publicUrl },
+      } = supabaseAdmin.storage.from("biblioteca_estudos").getPublicUrl(storagePath);
+
+      res.json({ success: true, publicUrl });
+    } catch (error: any) {
+      console.error("[SERVER] Erro no upload de banner de evento:", error.message || error);
+      res.status(500).json({ error: error.message || "Erro ao enviar banner" });
+    }
+  });
+
   // API Route: PDF Proxy — serve o PDF localmente para evitar CORS no PDF.js (Vercel)
   app.get("/api/v1/library/pdf-proxy", async (req, res) => {
     const { url } = req.query;
@@ -2253,10 +2308,21 @@ async function startServer() {
         return res.status(403).json({ error: "O plano Axé não permite a criação de eventos. Faça upgrade para o plano Orô." });
       }
 
+      const tenant_id = profile?.tenant_id || user.id;
+      const rawBanner = req.body?.banner_url;
+      const banner_url =
+        typeof rawBanner === "string" && rawBanner.trim().length > 0 ? rawBanner.trim() : null;
+
       const eventData = {
-        ...req.body,
+        titulo: req.body?.titulo,
+        data: req.body?.data,
+        hora: req.body?.hora,
+        tipo: req.body?.tipo,
+        descricao: req.body?.descricao ?? "",
+        status_confirmacao: req.body?.status_confirmacao ?? "Confirmado",
+        ...(banner_url ? { banner_url } : {}),
         lider_id: user.id,
-        tenant_id: profile?.tenant_id || user.id
+        tenant_id,
       };
 
       const { data, error } = await supabaseAdmin

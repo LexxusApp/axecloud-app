@@ -1,82 +1,100 @@
 import { supabase } from './supabase';
-
-/** Mantido entre sessões só para controle de deploy / atualização forçada. */
-const PRESERVED_LS_KEYS = new Set(['axecloud_version']);
+import { APP_VERSION } from '../config/version';
 
 /**
- * Remove sessão Supabase, caches de tenant e dados do app em localStorage/sessionStorage.
- * Preserva `axecloud_version` (ser sobrescrito depois em atualização forçada, se aplicável).
+ * Remove todos os caches do Cache Storage (PWA / Workbox).
  */
-export function clearClientAuthAndTenantStorage(): void {
-  if (typeof window === 'undefined') return;
-
-  const lsRemove: string[] = [];
-  for (let i = 0; i < localStorage.length; i += 1) {
-    const key = localStorage.key(i);
-    if (!key || PRESERVED_LS_KEYS.has(key)) continue;
-    if (
-      key.startsWith('sb-') ||
-      key.includes('supabase') ||
-      key.startsWith('axecloud_') ||
-      key.startsWith('axe_v2_')
-    ) {
-      lsRemove.push(key);
-    }
+async function deleteAllCacheStorage(): Promise<void> {
+  if (typeof caches === 'undefined') return;
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((key) => caches.delete(key)));
+  } catch {
+    /* Safari / modo privado */
   }
-  lsRemove.forEach((k) => localStorage.removeItem(k));
-
-  const ssRemove: string[] = [];
-  for (let i = 0; i < sessionStorage.length; i += 1) {
-    const key = sessionStorage.key(i);
-    if (!key) continue;
-    if (
-      key.startsWith('sb-') ||
-      key.includes('supabase') ||
-      key.startsWith('axecloud_') ||
-      key.startsWith('axe_v2_')
-    ) {
-      ssRemove.push(key);
-    }
-  }
-  ssRemove.forEach((k) => sessionStorage.removeItem(k));
 }
 
-function invalidateServiceWorkerAndCachesBestEffort(): void {
-  if (typeof window === 'undefined') return;
-  if ('serviceWorker' in navigator) {
-    void navigator.serviceWorker.getRegistrations().then((regs) => {
-      regs.forEach((r) => void r.unregister());
-    });
-  }
-  if (typeof caches !== 'undefined') {
-    void caches.keys().then((keys) => {
-      keys.forEach((k) => void caches.delete(k));
-    });
+/** Desregistra service workers para não servir shell antigo após logout. */
+async function unregisterAllServiceWorkers(): Promise<void> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map((r) => r.unregister()));
+  } catch {
+    /* ignorar */
   }
 }
 
 /**
- * Logout imediato (mobile): não aguarda rede.
- * signOut em segundo plano + limpeza síncrona + navegação full reload para /login.
+ * Logout com reset completo (mobile/PWA): encerra sessão no Supabase, apaga storage,
+ * limpa caches do PWA e força navegação full reload para /login.
+ *
+ * Regrava só `axecloud_version` com a versão atual do app após o clear, para não
+ * disparar o fluxo de “nova versão” no próximo carregamento.
  */
-export function performFastLogout(): void {
-  void supabase.auth.signOut();
-  clearClientAuthAndTenantStorage();
-  invalidateServiceWorkerAndCachesBestEffort();
+export async function performFastLogout(): Promise<void> {
+  if (typeof window === 'undefined') return;
+
+  try {
+    await supabase.auth.signOut();
+  } catch {
+    /* rede / timeout — seguimos com limpeza local */
+  }
+
+  try {
+    window.localStorage.clear();
+  } catch {
+    /* quota / privado */
+  }
+  try {
+    window.sessionStorage.clear();
+  } catch {
+    /* idem */
+  }
+
+  await deleteAllCacheStorage();
+  await unregisterAllServiceWorkers();
+
+  try {
+    localStorage.setItem('axecloud_version', APP_VERSION);
+  } catch {
+    /* ignorar */
+  }
+
   window.location.href = '/login';
 }
 
 /**
- * Atualização de versão (APP_VERSION): mesma limpeza agressiva, grava nova versão e recarrega na raiz.
+ * Deploy / nova versão: mesmo reset agressivo, grava a nova versão e recarrega na raiz.
  */
-export function performVersionBumpLogout(systemVersion: string): void {
-  void supabase.auth.signOut();
-  clearClientAuthAndTenantStorage();
+export async function performVersionBumpLogout(systemVersion: string): Promise<void> {
+  if (typeof window === 'undefined') return;
+
+  try {
+    await supabase.auth.signOut();
+  } catch {
+    /* ignorar */
+  }
+
+  try {
+    window.localStorage.clear();
+  } catch {
+    /* ignorar */
+  }
+  try {
+    window.sessionStorage.clear();
+  } catch {
+    /* ignorar */
+  }
+
+  await deleteAllCacheStorage();
+  await unregisterAllServiceWorkers();
+
   try {
     localStorage.setItem('axecloud_version', systemVersion);
   } catch {
-    /* quota / privado */
+    /* ignorar */
   }
-  invalidateServiceWorkerAndCachesBestEffort();
+
   window.location.assign('/?updated=true');
 }

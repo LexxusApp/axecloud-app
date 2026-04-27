@@ -46,12 +46,21 @@ export default defineConfig(({mode}) => {
         },
         workbox: {
           /** Bump ao mudar estratégia de cache — força precache/runtime novos e abandona caches antigos (cleanupOutdatedCaches). */
-          cacheId: 'axecloud-v2',
+          /** Bump para publicar nova regra NetworkOnly em /login (logout PWA). */
+          cacheId: 'axecloud-v2-auth',
           cleanupOutdatedCaches: true,
           importScripts: ['/sw-push.js'],
           // Evita que o fallback do SPA (index.html) intercepte navegação para /api/*
           navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
+            {
+              // Tela de autenticação: nunca servir HTML/bundle em cache (evita “logout falso” no PWA).
+              urlPattern: ({request, url, sameOrigin}) =>
+                sameOrigin &&
+                request.mode === 'navigate' &&
+                (url.pathname === '/login' || url.pathname === '/login/'),
+              handler: 'NetworkOnly',
+            },
             {
               // GET /api/* — rede primeiro (deploy novo invalida cache velho no PWA); fallback ao cache se offline/lento
               urlPattern: ({url, sameOrigin}) => sameOrigin && url.pathname.startsWith('/api/'),
