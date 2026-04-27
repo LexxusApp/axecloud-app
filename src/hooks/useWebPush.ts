@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-
-const VAPID_PUBLIC_KEY = "BEKar2pRRjBhX5Pz-EtX1QT07JbDBhSBx_-t5mAPZ3TevskbdG0w9JJNz-TbR-TzuIigtXTg27vCX_8GElZUM7Y";
+import { VAPID_PUBLIC_KEY } from '../config/vapidPublic';
 
 export function useWebPush(
   userId: string | null,

@@ -458,15 +458,16 @@ function usesDistantSubscriptionExpiry(plan: string | undefined): boolean {
   return isLifetimePlan(plan);
 }
 
-// Configuração Web Push
-const VAPID_PUBLIC_KEY = process.env.VITE_VAPID_PUBLIC_KEY || "BE8Nz7rSuhDrvaE7glwae51WL2CRGnqisSUN8VkZvi070qEqIkDfxC2ig8eExWwKRPuG6eUeU2BbjF1Cg_NATqA";
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "5iJSYqqeGj3Et2d_hmg9eKoCX06-edBhbIQQMkfsabc";
+// Web Push — O par público/privado DEVE ser o mesmo de `src/hooks/useWebPush.ts` e `server.ts`
+// (o cliente gera a subscription com a chave pública; enviar com outro par quebra o envio em silêncio).
+const VAPID_PUBLIC_KEY =
+  getServerEnv("VAPID_PUBLIC_KEY", "VITE_VAPID_PUBLIC_KEY") ||
+  "BEKar2pRRjBhX5Pz-EtX1QT07JbDBhSBx_-t5mAPZ3TevskbdG0w9JJNz-TbR-TzuIigtXTg27vCX_8GElZUM7Y";
+const VAPID_PRIVATE_KEY =
+  getServerEnv("VAPID_PRIVATE_KEY", "VITE_VAPID_PRIVATE_KEY") ||
+  "QsB2TftnfoqwCo7UhYYmmLMNR2yoorTI-FKjsmgrjA0";
 
-webpush.setVapidDetails(
-  'mailto:lucasilvasiqueira@outlook.com.br',
-  VAPID_PUBLIC_KEY,
-  VAPID_PRIVATE_KEY
-);
+webpush.setVapidDetails("mailto:contato@axecloud.com.br", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 // Supabase: na Vercel use process.env (SUPABASE_URL, SUPABASE_ANON_KEY, etc.); getServerEnv cobre VITE_* no dev
 const supabaseUrl = getServerEnv("VITE_SUPABASE_URL", "SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL");
@@ -787,7 +788,10 @@ async function startServer() {
   });
 
   // Helper: enviar push apenas para filhos de santo (tabela push_subscriptions por user_id)
-  async function sendPushNotification(tenantId: string, payload: { title: string; body: string; url: string }) {
+  async function sendPushNotification(
+    tenantId: string,
+    payload: { title: string; body: string; url: string }
+  ): Promise<{ sent: number; targets: number }> {
     try {
       const resolvedTenant = await resolveLeaderId(tenantId);
       const { data: filhos, error: filhosErr } = await supabaseAdmin
@@ -796,7 +800,10 @@ async function startServer() {
         .or(`tenant_id.eq.${resolvedTenant},lider_id.eq.${resolvedTenant},tenant_id.eq.${tenantId},lider_id.eq.${tenantId}`);
       if (filhosErr) throw filhosErr;
       const userIds = [...new Set((filhos || []).map((f: any) => f.user_id).filter(Boolean))];
-      if (userIds.length === 0) return;
+      if (userIds.length === 0) {
+        console.warn('[PUSH] Nenhum filho de santo vinculado a este terreiro para notificar.');
+        return { sent: 0, targets: 0 };
+      }
 
       const { data: subscriptions, error } = await supabaseAdmin
         .from('push_subscriptions')
@@ -804,29 +811,39 @@ async function startServer() {
         .in('user_id', userIds);
 
       if (error) throw error;
-      if (!subscriptions || subscriptions.length === 0) return;
+      if (!subscriptions || subscriptions.length === 0) {
+        console.warn('[PUSH] Filhos do terreiro sem inscrição push (push_subscriptions vazia).');
+        return { sent: 0, targets: userIds.length };
+      }
 
       console.log(`[PUSH] Enviando para ${subscriptions.length} inscrição(ões) de filhos do terreiro`);
 
-      const pushPromises = subscriptions.map((sub: any) => {
-        return webpush.sendNotification(
-          sub.subscription_object,
-          JSON.stringify(payload)
-        ).catch(err => {
-          if (err.statusCode === 410 || err.statusCode === 404) {
-            console.log("[PUSH] Removendo inscrição inválida");
-            return supabaseAdmin
-              .from('push_subscriptions')
-              .delete()
-              .eq('subscription_object->>endpoint', sub.subscription_object.endpoint);
-          }
-          console.error("[PUSH] Erro ao enviar notificação individual:", err);
-        });
-      });
+      let sent = 0;
+      await Promise.all(
+        subscriptions.map((sub: any) =>
+          webpush
+            .sendNotification(sub.subscription_object, JSON.stringify(payload))
+            .then(() => {
+              sent++;
+            })
+            .catch((err) => {
+              if (err.statusCode === 410 || err.statusCode === 404) {
+                console.log('[PUSH] Removendo inscrição inválida');
+                return supabaseAdmin
+                  .from('push_subscriptions')
+                  .delete()
+                  .eq('subscription_object->>endpoint', sub.subscription_object.endpoint);
+              }
+              console.error('[PUSH] Erro ao enviar notificação individual:', err);
+            })
+        )
+      );
 
-      await Promise.all(pushPromises);
+      console.log(`[PUSH] Concluído: ${sent}/${subscriptions.length} enviados`);
+      return { sent, targets: userIds.length };
     } catch (error) {
-      console.error("[PUSH] Erro geral ao enviar notificações:", error);
+      console.error('[PUSH] Erro geral ao enviar notificações:', error);
+      return { sent: 0, targets: 0 };
     }
   }
 
@@ -921,13 +938,13 @@ async function startServer() {
       }
 
       const pushTargetTenant = pl.tenant_id || zeladorId;
-      sendPushNotification(pushTargetTenant, {
+      const pushResult = await sendPushNotification(pushTargetTenant, {
         title: `Novo Aviso: ${titulo}`,
         body: conteudo.substring(0, 100) + (conteudo.length > 100 ? '...' : ''),
         url: '/mural'
       });
 
-      res.json({ success: true, data: notice });
+      res.json({ success: true, data: notice, push: pushResult });
     } catch (error: any) {
       console.error("[SERVER] Erro ao criar aviso:", error);
       res.status(500).json({ error: error.message });
@@ -2251,11 +2268,11 @@ async function startServer() {
       if (error) throw error;
 
       // Push apenas para filhos de santo inscritos
-      sendPushNotification(profile?.tenant_id || user.id, {
+      void sendPushNotification(profile?.tenant_id || user.id, {
         title: `Novo evento: ${req.body.titulo}`,
         body: `${req.body.data} às ${req.body.hora}`,
         url: '/calendar'
-      });
+      }).catch((e) => console.error('[PUSH] após criar evento:', e));
 
       res.json({ success: true, data });
     } catch (error: any) {
