@@ -11,7 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { supabase } from '../lib/supabase';
+import { performFastLogout } from '../lib/logout';
 import { usePwaInstall } from '../contexts/PwaInstallContext';
 
 const MOBILE_DRAWER_TRANSITION =
@@ -46,8 +46,8 @@ export default function FilhoSidebar({
     { id: 'store', label: 'Loja Axé', icon: ShoppingBag },
   ];
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+  const handleLogout = () => {
+    performFastLogout();
   };
 
   const handleNav = (id: string) => {

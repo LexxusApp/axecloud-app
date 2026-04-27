@@ -24,6 +24,7 @@ import {
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../lib/supabase';
+import { performFastLogout } from '../lib/logout';
 import { hasPlanAccess } from '../constants/plans';
 import { usePwaInstall } from '../contexts/PwaInstallContext';
 
@@ -88,8 +89,8 @@ export default function Sidebar({ activeTab, setActiveTab, isMobileOpen, setIsMo
     };
   }, [userRole]);
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+  const handleLogout = () => {
+    performFastLogout();
   };
 
   const currentNavItems = userRole === 'filho' 

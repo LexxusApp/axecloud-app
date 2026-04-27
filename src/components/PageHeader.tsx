@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Settings, LogOut, User } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { performFastLogout } from '../lib/logout';
 import { cn } from '../lib/utils';
 
 interface PageHeaderProps {
@@ -106,9 +106,8 @@ export default function PageHeader({ title, subtitle, actions, tabs, tenantData,
                         Configurações
                       </button>
                       <button
-                        onClick={async () => {
-                          await supabase.auth.signOut();
-                        }}
+                        type="button"
+                        onClick={() => performFastLogout()}
                         className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-bold text-red-500 hover:bg-red-500/10 transition-all"
                       >
                         <LogOut className="w-4 h-4" />

@@ -36,6 +36,7 @@ import {
 } from './lib/tenantCache';
 import { resolveTenantFromSupabase } from './lib/resolveTenantFromSupabase';
 import { PwaInstallTopbarButton } from './components/PwaInstallTopbarButton';
+import { performFastLogout, performVersionBumpLogout } from './lib/logout';
 
 const SYSTEM_VERSION = APP_VERSION; // force logout on update
 
@@ -49,33 +50,6 @@ function isFilhoIdentity(user?: { email?: string | null; user_metadata?: any } |
   const role = String(user?.user_metadata?.role || roleFallback || '').toLowerCase().trim();
   const email = String(user?.email || emailFallback || '').toLowerCase().trim();
   return role === 'filho' || (email.startsWith('f_') && email.endsWith('@axecloud.internal'));
-}
-
-function clearUserSessionStorage() {
-  const localKeysToRemove: string[] = [];
-  for (let i = 0; i < localStorage.length; i += 1) {
-    const key = localStorage.key(i);
-    if (!key || key === 'axecloud_version') continue;
-    if (
-      key.startsWith('sb-') ||
-      key.includes('supabase') ||
-      key === 'axecloud_notifications' ||
-      key === 'axecloud_mural_read'
-    ) {
-      localKeysToRemove.push(key);
-    }
-  }
-  localKeysToRemove.forEach((key) => localStorage.removeItem(key));
-
-  const sessionKeysToRemove: string[] = [];
-  for (let i = 0; i < sessionStorage.length; i += 1) {
-    const key = sessionStorage.key(i);
-    if (!key) continue;
-    if (key.startsWith('sb-') || key.includes('supabase') || key.startsWith('axecloud_')) {
-      sessionKeysToRemove.push(key);
-    }
-  }
-  sessionKeysToRemove.forEach((key) => sessionStorage.removeItem(key));
 }
 
 export default function App() {
@@ -307,20 +281,12 @@ export default function App() {
   };
 
   useEffect(() => {
-    const initializeAuth = async () => {
+    const initializeAuth = () => {
       const lastVersion = localStorage.getItem('axecloud_version');
-      
+
       if (lastVersion !== SYSTEM_VERSION) {
         console.log('[SYSTEM] Nova versão detectada:', SYSTEM_VERSION);
-        try {
-          await supabase.auth.signOut();
-        } catch (err) {
-          console.warn('[SYSTEM] Falha ao finalizar sessão durante atualização:', err);
-        } finally {
-          clearUserSessionStorage();
-          localStorage.setItem('axecloud_version', SYSTEM_VERSION);
-          window.location.assign('/?updated=true');
-        }
+        performVersionBumpLogout(SYSTEM_VERSION);
       }
     };
 
@@ -517,7 +483,7 @@ export default function App() {
           </div>
           <h2 className="text-3xl font-black text-white tracking-tighter">CONTA EXCLUÍDA</h2>
           <p className="text-gray-400 font-medium">Esta conta foi removida do sistema. Entre em contato com o suporte para mais informações.</p>
-          <button onClick={() => supabase.auth.signOut()} className="w-full py-4 bg-white/5 hover:bg-white/10 text-white font-bold rounded-2xl transition-all">
+          <button onClick={() => performFastLogout()} className="w-full py-4 bg-white/5 hover:bg-white/10 text-white font-bold rounded-2xl transition-all">
             VOLTAR AO LOGIN
           </button>
         </div>
@@ -541,7 +507,7 @@ export default function App() {
           </div>
           <h2 className="text-3xl font-black text-white tracking-tighter">ACESSO SUSPENSO</h2>
           <p className="text-gray-400 font-medium">Seu acesso ao AxéCloud foi temporariamente suspenso por um administrador.</p>
-          <button onClick={() => supabase.auth.signOut()} className="w-full py-4 bg-white/5 hover:bg-white/10 text-white font-bold rounded-2xl transition-all">
+          <button onClick={() => performFastLogout()} className="w-full py-4 bg-white/5 hover:bg-white/10 text-white font-bold rounded-2xl transition-all">
             VOLTAR AO LOGIN
           </button>
         </div>
