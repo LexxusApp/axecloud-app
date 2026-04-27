@@ -6,7 +6,7 @@ import axios from "axios";
 import { fileURLToPath } from "url";
 import cors from "cors";
 import webpush from "web-push";
-import * as MensZelador from "../src/lib/mensalidadesZeladorApi";
+import * as MensZelador from "../src/lib/mensalidadeszeladorapi";
 import {
   normalizeQueryTenantId,
   resolveFinanceiroTenantScope,
@@ -2420,3 +2420,5 @@ export default async function handler(req: any, res: any) {
     res.status(500).json({ error: "Internal Server Error during initialization", details: err.message || String(err) });
   }
 }
+
+// deploy-bump: 2026-04-27 — import mensalidadeszeladorapi (minúsculas) para Vercel/Linux (ERR_MODULE_NOT_FOUND)

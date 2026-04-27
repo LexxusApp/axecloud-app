@@ -7,7 +7,7 @@ import { fileURLToPath } from "url";
 import cors from "cors";
 import geoip from "geoip-lite";
 import webpush from "web-push";
-import * as MensZelador from "./src/lib/mensalidadesZeladorApi";
+import * as MensZelador from "./src/lib/mensalidadeszeladorapi";
 import {
   normalizeQueryTenantId,
   resolveFinanceiroTenantScope,
