@@ -845,7 +845,7 @@ export default function App() {
         {/* Main Content Area with Scroll */}
         <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
           <main className={cn("flex min-h-full w-full min-w-0 max-w-full flex-col overflow-x-hidden bg-[#121212]/80 backdrop-blur-[2px] lg:pb-0", userRole !== 'filho' ? "pb-24" : "pb-6")} data-role={userRole ?? undefined}>
-            {/* Notificações push: apenas filhos de santo (avisos do mural e agenda do zelador) */}
+            {/* Notificações push: apenas filhos — banner só com permissão ainda "default"; granted/denied o navegador já decidiu */}
             {userRole === 'filho' && permission === 'default' && session && (
               <div className="bg-primary/10 border border-primary/20 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 mb-6">
                 <div className="flex items-center gap-3">
@@ -864,6 +864,12 @@ export default function App() {
                 >
                   {pushLoading ? 'Ativando...' : 'Ativar Agora'}
                 </button>
+              </div>
+            )}
+            {userRole === 'filho' && permission === 'denied' && session && (
+              <div className="mb-6 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-gray-400">
+                Notificações estão <span className="font-bold text-white/80">bloqueadas</span> neste navegador. Para receber avisos do terreiro, permita o site em{' '}
+                <span className="text-gray-300">Configurações do site</span> (ícone de cadeado ou informações ao lado do endereço).
               </div>
             )}
             {renderView()}

@@ -112,7 +112,8 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
     }
     void fetchEvents();
     void fetchChildren();
-  }, [currentMonth, effectiveTenantId]);
+    // Filho: recarrega ao mudar o mês (faixa de datas). Zelador: lista completa, só refetch ao trocar terreiro/papel.
+  }, isFilho ? [currentMonth, effectiveTenantId, isFilho] : [effectiveTenantId, isFilho]);
 
   useEffect(() => {
     if (selectedEventForGuests) {
@@ -218,6 +219,36 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
 
   async function fetchEvents() {
     if (!effectiveTenantId) return;
+
+    // Gestor: traz todos os eventos do terreiro (gestão e “próximo evento” não dependem do mês visível)
+    if (!isFilho) {
+      const cacheKey = `cal_events_all_${effectiveTenantId}`;
+      const cached = readStaleCache<Event[]>(cacheKey);
+      if (cached != null) {
+        setEvents(cached);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+      try {
+        const url = `/api/events?tenantId=${encodeURIComponent(effectiveTenantId)}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+          const body = await response.text().catch(() => '');
+          throw new Error(`Failed to fetch events (${response.status}): ${body}`);
+        }
+        const { data } = await response.json();
+        const list = data || [];
+        setEvents(list);
+        writeStaleCache(cacheKey, list);
+      } catch (error) {
+        console.error('Error fetching events:', error);
+        setEvents([]);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
 
     const monthStart = startOfMonth(currentMonth);
     const rangeEnd = addDays(endOfMonth(currentMonth), 7);
@@ -438,30 +469,34 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
     }
   };
 
-  const next24hEvents = useMemo(() => {
-    return events
-      .filter(e => {
+  const parseEventDateTime = (e: Event) => {
+    const [y, m, d] = e.data.split('-').map(Number);
+    const parts = (e.hora || '0:0:0').toString().split(':').map((p) => parseInt(p, 10) || 0);
+    const h = parts[0] ?? 0;
+    const min = parts[1] ?? 0;
+    const s = parts[2] ?? 0;
+    return new Date(y, m - 1, d, h, min, s);
+  };
+
+  /** Próximo evento futuro (qualquer data/mês) — requer lista completa no zelador. */
+  const nextUpcomingEvent = useMemo(() => {
+    const now = new Date();
+    return [...events]
+      .filter((e) => {
         try {
-          const [year, month, day] = e.data.split('-').map(Number);
-          const [hours, minutes] = e.hora.split(':').map(Number);
-          const eventDateTime = new Date(year, month - 1, day, hours, minutes);
-          const now = new Date();
-          const next24 = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-          return eventDateTime >= now && eventDateTime <= next24;
-        } catch (err) {
-          console.error('[DEBUG] Error parsing event date:', err);
+          return parseEventDateTime(e).getTime() > now.getTime();
+        } catch {
           return false;
         }
       })
-      .sort((a, b) => {
-        const [yearA, monthA, dayA] = a.data.split('-').map(Number);
-        const [hoursA, minutesA] = a.hora.split(':').map(Number);
-        const dateA = new Date(yearA, monthA - 1, dayA, hoursA, minutesA);
-        const [yearB, monthB, dayB] = b.data.split('-').map(Number);
-        const [hoursB, minutesB] = b.hora.split(':').map(Number);
-        const dateB = new Date(yearB, monthB - 1, dayB, hoursB, minutesB);
-        return dateA.getTime() - dateB.getTime();
-      });
+      .sort((a, b) => parseEventDateTime(a).getTime() - parseEventDateTime(b).getTime())[0] ?? null;
+  }, [events]);
+
+  /** Todos os eventos em ordem cronológica (gestão: qualquer mês/ano). */
+  const eventsSorted = useMemo(() => {
+    return [...events].sort(
+      (a, b) => parseEventDateTime(a).getTime() - parseEventDateTime(b).getTime()
+    );
   }, [events]);
 
   if (loading && events.length === 0) {
@@ -833,18 +868,18 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
           <div className="space-y-6">
             <h3 className="text-xl font-bold text-white flex items-center gap-2">
               <Clock className="w-5 h-5 text-primary" />
-              Próximas 24h
+              Próximo evento
             </h3>
             <div className="space-y-4">
-              {next24hEvents.map((event) => (
+              {nextUpcomingEvent && (
                 <motion.div
                   initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
-                  key={event.id}
+                  key={nextUpcomingEvent.id}
                   className="card-luxury p-5 border-l-4 border-l-primary"
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-black text-primary uppercase tracking-widest">{event.tipo}</span>
+                    <span className="text-xs font-black text-primary uppercase tracking-widest">{nextUpcomingEvent.tipo}</span>
                     <div className="flex gap-2">
                       {isAdmin && (
                         <>
@@ -852,7 +887,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setSelectedEventForGuests(event);
+                                setSelectedEventForGuests(nextUpcomingEvent);
                               }}
                               className="p-1 hover:bg-white/10 rounded text-primary hover:text-primary/80 transition-colors"
                               title="Gestão de Convidados"
@@ -863,7 +898,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
                           <button 
                             onClick={(e) => {
                               e.stopPropagation();
-                              setItemToDelete({ id: event.id, type: 'event', title: event.titulo });
+                              setItemToDelete({ id: nextUpcomingEvent.id, type: 'event', title: nextUpcomingEvent.titulo });
                             }}
                             className="p-1 hover:bg-white/10 rounded text-gray-500 hover:text-red-500 transition-colors"
                           >
@@ -874,16 +909,24 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
                       <Bell className="w-4 h-4 text-gray-600" />
                     </div>
                   </div>
-                  <h4 className="font-bold text-white text-lg">{event.titulo}</h4>
-                  <div className="flex items-center gap-2 text-gray-400 mt-2">
-                    <Clock className="w-4 h-4" />
-                    <span className="text-sm font-medium">{event.hora}</span>
+                  <h4 className="font-bold text-white text-lg">{nextUpcomingEvent.titulo}</h4>
+                  <div className="flex flex-col gap-1 text-gray-400 mt-2">
+                    <div className="flex items-center gap-2">
+                      <CalendarIcon className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium">
+                        {format(parseISO(nextUpcomingEvent.data), "EEEE, dd/MM/yyyy", { locale: ptBR })}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 shrink-0" />
+                      <span className="text-sm font-medium">{nextUpcomingEvent.hora}</span>
+                    </div>
                   </div>
                 </motion.div>
-              ))}
-              {next24hEvents.length === 0 && (
+              )}
+              {!nextUpcomingEvent && (
                 <div className="card-luxury p-8 text-center text-gray-500 font-medium">
-                  Nenhum evento nas próximas 24h.
+                  Não há eventos futuros agendados.
                 </div>
               )}
             </div>
@@ -943,7 +986,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {events.map(event => {
+              {eventsSorted.map(event => {
                 const passed = isEventPassed(event.data, event.hora);
                 return (
                 <div key={event.id} className={cn("card-luxury p-6 border-l-4 flex flex-col h-full", passed ? "border-l-gray-500 opacity-75" : "border-l-primary")}>
@@ -996,7 +1039,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
                   </div>
                 </div>
               )})}
-              {events.length === 0 && (
+              {eventsSorted.length === 0 && (
                 <div className="col-span-full card-luxury p-12 text-center text-gray-500 font-medium">
                   Nenhum evento cadastrado.
                 </div>

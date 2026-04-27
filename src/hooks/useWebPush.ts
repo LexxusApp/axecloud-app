@@ -97,6 +97,19 @@ export function useWebPush(
     }
   }, [userId]);
 
+  // Alinhar com o navegador quando o papel vira "filho" (antes enabled era false) ou após voltar à aba
+  useEffect(() => {
+    if (!enabled) return;
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    const sync = () => setPermission(Notification.permission);
+    sync();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') sync();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [enabled, userId]);
+
   useEffect(() => {
     // Auto-subscribe apenas 1 vez se já tiver permissão — sem loops (somente quando push está habilitado p/ o papel atual)
     if (
@@ -114,7 +127,8 @@ export function useWebPush(
   }, [enabled, permission, userId, tenantId, isSubscribed, subscribe]);
 
   return {
-    permission: hasFailed.current ? 'denied' as NotificationPermission : permission,
+    /** Estado real do navegador — não forçar 'denied' após falha de rede/push (senão some o banner sem o usuário ter respondido). */
+    permission,
     isSubscribed,
     loading,
     subscribe
