@@ -31,6 +31,7 @@ import { useWebPush } from './hooks/useWebPush';
 import { APP_VERSION } from './config/version';
 import {
   clearCachedTenantIdForUser,
+  peekCachedTenantId,
   readCachedTenantIdForUser,
   writeCachedTenantIdForUser,
 } from './lib/tenantCache';
@@ -76,6 +77,9 @@ export default function App() {
   } | null>(null);
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const [filhoFotoUrl, setFilhoFotoUrl] = useState<string | null>(null);
+  /** Falha ao recuperar tenant após API + fallback (evita shell “zumbi”). */
+  const [tenantRecoveryFailed, setTenantRecoveryFailed] = useState(false);
+  const lastAuthUserIdRef = useRef<string | null>(null);
 
   const isFilhoForPush = userRole === 'filho';
   const { permission, subscribe, loading: pushLoading } = useWebPush(
@@ -96,39 +100,110 @@ export default function App() {
     }
   }, []);
 
-  const forceMountAuthenticatedApp = (userId: string, userEmail?: string | null, authRole?: string) => {
-    const fallbackRole: 'admin' | 'filho' = isFilhoIdentity(null, userEmail || undefined, authRole)
-      ? 'filho'
-      : 'admin';
-    const isSuperAdmin = userEmail === 'lucasilvasiqueira@outlook.com.br';
-    const fallbackPlan = isSuperAdmin ? 'premium' : 'axe';
+  /**
+   * Após falha do tenant-info ou timeout: valida sessão real com getSession(),
+   * hidrata tenant do cache ou resolveTenantFromSupabase. Filho sem vínculo não recebe tenant_id falso.
+   */
+  const recoverTenantAfterFailure = async (
+    userId: string,
+    userEmail?: string | null,
+    authRole?: string
+  ): Promise<boolean> => {
+    setTenantRecoveryFailed(false);
+    try {
+      const {
+        data: { session: fresh },
+      } = await supabase.auth.getSession();
+      if (!fresh?.user || fresh.user.id !== userId) {
+        setSession(null);
+        setTenantData(null);
+        setUserRole(null);
+        lastAuthUserIdRef.current = null;
+        return false;
+      }
 
-    setUserRole(prev => prev || fallbackRole);
-    setTenantData(prev => prev || {
-      nome: 'Meu Terreiro',
-      plan: fallbackPlan,
-      tenant_id: userId,
-      role: fallbackRole,
-    });
-    writeCachedTenantIdForUser(userId, userId);
-    setIsAdminGlobal(prev => prev || isSuperAdmin);
-    setIsMasterActive(prev => prev || isSuperAdmin);
-    setSubscriptionActive(true);
-    setActiveTab(prev => fallbackRole === 'filho' ? normalizeFilhoTab(prev) : prev);
-    setLoading(false);
+      let tid = readCachedTenantIdForUser(userId);
+      if (!tid) {
+        tid = await resolveTenantFromSupabase(userId, userEmail ?? undefined);
+        if (tid) writeCachedTenantIdForUser(userId, tid);
+      }
+
+      const isFilhoAuth = isFilhoIdentity(fresh.user, undefined, authRole);
+
+      if (tid) {
+        setSession(fresh);
+        setUserRole(isFilhoAuth ? 'filho' : 'admin');
+        setTenantData({
+          nome: '',
+          plan: 'axe',
+          tenant_id: tid,
+          role: isFilhoAuth ? 'filho' : 'admin',
+        });
+        setSubscriptionActive(true);
+        const superAdm = fresh.user.email === 'lucasilvasiqueira@outlook.com.br';
+        setIsAdminGlobal(superAdm);
+        if (superAdm) setIsMasterActive(true);
+        if (isFilhoAuth) {
+          setIsMasterActive(false);
+          setActiveTab((prev) => normalizeFilhoTab(prev));
+        }
+        return true;
+      }
+
+      if (!isFilhoAuth) {
+        writeCachedTenantIdForUser(userId, userId);
+        setSession(fresh);
+        setUserRole('admin');
+        const superAdm = fresh.user.email === 'lucasilvasiqueira@outlook.com.br';
+        setTenantData({
+          nome: '',
+          plan: superAdm ? 'premium' : 'axe',
+          tenant_id: userId,
+          role: 'admin',
+        });
+        setSubscriptionActive(true);
+        setIsAdminGlobal(superAdm);
+        if (superAdm) setIsMasterActive(true);
+        return true;
+      }
+
+      setTenantRecoveryFailed(true);
+      return false;
+    } catch (e) {
+      console.error('[recoverTenantAfterFailure]', e);
+      setTenantRecoveryFailed(true);
+      return false;
+    }
   };
 
   const loadAllTenantData = async (userId: string, userEmail?: string, authRole?: string) => {
     let retries = 5;
     const isFilhoAuth = isFilhoIdentity(null, userEmail, authRole);
-    
+
+    const cachedSnap = peekCachedTenantId(userId);
+    if (cachedSnap) {
+      setTenantData((prev) => ({
+        nome: prev?.nome ?? '',
+        plan: prev?.plan ?? 'axe',
+        tenant_id: cachedSnap,
+        expires_at: prev?.expires_at,
+        status: prev?.status,
+        foto_url: prev?.foto_url,
+        cargo: prev?.cargo ?? undefined,
+        role: prev?.role ?? undefined,
+      }));
+    }
+
     // Safety Net: Garantia de que o loader sairá em no máximo 15s
     const safetyTimeout = setTimeout(() => {
-      console.warn('[SYSTEM] Safety timeout atingido. Forçando encerramento do loader.');
-      forceMountAuthenticatedApp(userId, userEmail, authRole);
+      console.warn('[SYSTEM] Safety timeout atingido — recuperação por cache/Supabase.');
+      void recoverTenantAfterFailure(userId, userEmail, authRole).then((ok) => {
+        if (!ok) setTenantRecoveryFailed(true);
+      });
     }, 15000);
 
     try {
+      setTenantRecoveryFailed(false);
       while (retries > 0) {
         try {
           const url = `/api/tenant-info?userId=${userId}&email=${encodeURIComponent(userEmail || '')}`;
@@ -263,6 +338,16 @@ export default function App() {
 
         } catch (err: any) {
           console.warn(`[WARN] Recuperando Tenant (Tentativa ${6 - retries}): ${err?.message || 'Failed to fetch'}`);
+          const {
+            data: { session: alive },
+          } = await supabase.auth.getSession();
+          if (!alive?.user) {
+            setSession(null);
+            setTenantData(null);
+            setUserRole(null);
+            lastAuthUserIdRef.current = null;
+            return;
+          }
           retries--;
           
           if (retries > 0) {
@@ -272,8 +357,9 @@ export default function App() {
           }
 
           // Nunca exibir tela de assinatura/lock só porque a API caiu (5xx) ou rede falhou
-          console.warn('[WARN] tenant-info indisponível após tentativas — fallback seguro.');
-          forceMountAuthenticatedApp(userId, userEmail, authRole);
+          console.warn('[WARN] tenant-info indisponível — validando sessão e recuperando tenant.');
+          const recovered = await recoverTenantAfterFailure(userId, userEmail, authRole);
+          if (!recovered) setTenantRecoveryFailed(true);
           return;
         }
       }
@@ -308,8 +394,32 @@ export default function App() {
         session && 
         initializedRef.current
       ) {
-         setSession(session); 
-         return;
+        const {
+          data: { session: fresh },
+        } = await supabase.auth.getSession();
+        const effective = fresh ?? session;
+        setSession(effective);
+        if (effective?.user) {
+          lastAuthUserIdRef.current = effective.user.id;
+          const cachedMerge = peekCachedTenantId(effective.user.id);
+          if (cachedMerge) {
+            setTenantData((prev) =>
+              prev?.tenant_id
+                ? prev
+                : {
+                    nome: prev?.nome ?? '',
+                    plan: prev?.plan ?? 'axe',
+                    tenant_id: cachedMerge,
+                    expires_at: prev?.expires_at,
+                    status: prev?.status,
+                    foto_url: prev?.foto_url,
+                    cargo: prev?.cargo ?? undefined,
+                    role: prev?.role ?? undefined,
+                  }
+            );
+          }
+        }
+        return;
       }
 
       // Evento disparado silenciamente ao trocar de aba sem alterar o usuário
@@ -321,12 +431,22 @@ export default function App() {
       try {
         setSession(session);
         if (session) {
+          lastAuthUserIdRef.current = session.user.id;
           if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
             // Garante que qualquer papel residual de sessão anterior não vaze para a UI
             // enquanto os dados do novo usuário ainda estão sendo carregados.
             setUserRole(null);
             setLoading(true);
+            setTenantRecoveryFailed(false);
             setIsMobileOpen(false);
+            const cachedImmediate = peekCachedTenantId(session.user.id);
+            if (cachedImmediate) {
+              setTenantData({
+                nome: '',
+                plan: 'axe',
+                tenant_id: cachedImmediate,
+              });
+            }
             // Sempre inicia na Home após sessão válida; evita aba 'profile' órfã (sem filho)
             // da sessão anterior. Filhos de santo são reposicionados em loadAllTenantData.
             const isFilhoAuth = isFilhoIdentity(session.user);
@@ -341,14 +461,16 @@ export default function App() {
             initializedRef.current = true;
           }
         } else {
-          const signingOutUserId = session?.user?.id;
-          if (signingOutUserId) clearCachedTenantIdForUser(signingOutUserId);
+          const uidOut = lastAuthUserIdRef.current;
+          if (uidOut) clearCachedTenantIdForUser(uidOut);
+          lastAuthUserIdRef.current = null;
           setUserRole(null);
           setIsAdminGlobal(false);
           setSubscriptionActive(true);
           setTenantData(null);
           setSelectedChildId(null);
           setFilhoFotoUrl(null);
+          setTenantRecoveryFailed(false);
           setActiveTab('dashboard');
           setIsMobileOpen(false);
           initializedRef.current = false;
@@ -356,13 +478,23 @@ export default function App() {
       } catch (error: any) {
         if (error && error.message && (error.message.includes('stole it') || error.message.includes('Lock'))) {
           if (session?.user) {
-            forceMountAuthenticatedApp(session.user.id, session.user.email, session.user.user_metadata?.role);
+            void recoverTenantAfterFailure(
+              session.user.id,
+              session.user.email,
+              session.user.user_metadata?.role
+            );
           }
           return;
         }
         console.error('Error in onAuthStateChange:', error);
         if (session?.user) {
-          forceMountAuthenticatedApp(session.user.id, session.user.email, session.user.user_metadata?.role);
+          void recoverTenantAfterFailure(
+            session.user.id,
+            session.user.email,
+            session.user.user_metadata?.role
+          ).then((ok) => {
+            if (!ok) setTenantRecoveryFailed(true);
+          });
         }
       } finally {
         if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
@@ -376,7 +508,13 @@ export default function App() {
 
   useEffect(() => {
     if (!loading && session?.user && !userRole) {
-      forceMountAuthenticatedApp(session.user.id, session.user.email, session.user.user_metadata?.role);
+      void recoverTenantAfterFailure(
+        session.user.id,
+        session.user.email,
+        session.user.user_metadata?.role
+      ).then((ok) => {
+        if (!ok) setTenantRecoveryFailed(true);
+      });
     }
   }, [loading, session, userRole]);
 
@@ -574,7 +712,51 @@ export default function App() {
     );
   }
 
-  if (userRole === 'filho' && !tenantData?.tenant_id) {
+  if (!tenantData?.tenant_id) {
+    if (tenantRecoveryFailed) {
+      return (
+        <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 relative overflow-hidden">
+          <div
+            className="fixed inset-0 bg-cover bg-center bg-no-repeat pointer-events-none"
+            style={{
+              backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0.6)), url('/login-bg.png')`,
+              backgroundAttachment: 'fixed',
+            }}
+          />
+          <div className="relative z-10 max-w-md w-full bg-card border border-white/10 rounded-[32px] p-8 text-center space-y-6">
+            <ShieldAlert className="w-14 h-14 text-amber-500 mx-auto" />
+            <h2 className="text-xl font-black text-white tracking-tight">Não foi possível carregar o terreiro</h2>
+            <p className="text-sm text-gray-400 font-medium">
+              A sessão existe, mas os dados do terreiro não foram recuperados. Tente recarregar ou saia e entre de novo.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setTenantRecoveryFailed(false);
+                  setLoading(true);
+                  void loadAllTenantData(
+                    session.user.id,
+                    session.user.email,
+                    session.user.user_metadata?.role
+                  );
+                }}
+                className="w-full py-4 bg-primary text-black font-black rounded-2xl hover:opacity-95 transition-opacity"
+              >
+                Tentar novamente
+              </button>
+              <button
+                type="button"
+                onClick={() => void performFastLogout()}
+                className="w-full py-4 bg-white/5 hover:bg-white/10 text-white font-bold rounded-2xl transition-all"
+              >
+                Sair
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center relative overflow-hidden">
         <div 

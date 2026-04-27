@@ -38,30 +38,24 @@ export async function performFastLogout(): Promise<void> {
   try {
     await supabase.auth.signOut();
   } catch {
-    /* rede / timeout — seguimos com limpeza local */
+    /* rede / timeout — emergência no finally */
   }
 
   try {
+    await deleteAllCacheStorage();
+    await unregisterAllServiceWorkers();
     window.localStorage.clear();
-  } catch {
-    /* quota / privado */
-  }
-  try {
     window.sessionStorage.clear();
+    try {
+      localStorage.setItem('axecloud_version', APP_VERSION);
+    } catch {
+      /* ignorar */
+    }
   } catch {
-    /* idem */
+    /* limpeza falhou — mesmo assim redireciona */
+  } finally {
+    window.location.href = '/login';
   }
-
-  await deleteAllCacheStorage();
-  await unregisterAllServiceWorkers();
-
-  try {
-    localStorage.setItem('axecloud_version', APP_VERSION);
-  } catch {
-    /* ignorar */
-  }
-
-  window.location.href = '/login';
 }
 
 /**
@@ -77,24 +71,23 @@ export async function performVersionBumpLogout(systemVersion: string): Promise<v
   }
 
   try {
+    await deleteAllCacheStorage();
+    await unregisterAllServiceWorkers();
     window.localStorage.clear();
-  } catch {
-    /* ignorar */
-  }
-  try {
     window.sessionStorage.clear();
+    try {
+      localStorage.setItem('axecloud_version', systemVersion);
+    } catch {
+      /* ignorar */
+    }
+    window.location.assign('/?updated=true');
   } catch {
-    /* ignorar */
+    try {
+      window.localStorage.clear();
+      localStorage.setItem('axecloud_version', systemVersion);
+    } catch {
+      /* ignorar */
+    }
+    window.location.assign('/?updated=true');
   }
-
-  await deleteAllCacheStorage();
-  await unregisterAllServiceWorkers();
-
-  try {
-    localStorage.setItem('axecloud_version', systemVersion);
-  } catch {
-    /* ignorar */
-  }
-
-  window.location.assign('/?updated=true');
 }

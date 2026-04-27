@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Lock, Mail, ArrowRight, Loader2, UserCircle2, KeyRound, AlertCircle, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
+import { writeCachedTenantIdForUser } from '../lib/tenantCache';
 
 export default function Login() {
   const [loginType, setLoginType] = useState<'zelador' | 'filho'>('zelador');
@@ -83,6 +84,26 @@ export default function Login() {
         });
 
         if (signInError) throw signInError;
+      }
+
+      const {
+        data: { session: postSession },
+      } = await supabase.auth.getSession();
+      if (postSession?.user) {
+        try {
+          const r = await fetch(
+            `/api/tenant-info?userId=${encodeURIComponent(postSession.user.id)}&email=${encodeURIComponent(postSession.user.email || '')}`
+          );
+          if (r.ok) {
+            const j = await r.json();
+            const tid = String(j.tenant_id || '').trim() || postSession.user.id;
+            writeCachedTenantIdForUser(postSession.user.id, tid);
+          } else {
+            writeCachedTenantIdForUser(postSession.user.id, postSession.user.id);
+          }
+        } catch {
+          writeCachedTenantIdForUser(postSession.user.id, postSession.user.id);
+        }
       }
       // Pós-login: rota inicial é controlada pelo App (aba dashboard / ajuste para filho em loadAllTenantData).
     } catch (err: any) {

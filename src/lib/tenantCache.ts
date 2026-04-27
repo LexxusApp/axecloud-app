@@ -56,6 +56,14 @@ export function clearCachedTenantIdForUser(userId: string) {
   }
 }
 
+/**
+ * Hidratação síncrona no refresh: mesmo antes do tenant-info, grafos/listas podem usar este id.
+ * Deve ser chamado assim que existir `user.id` (INITIAL_SESSION / login).
+ */
+export function peekCachedTenantId(userId: string): string {
+  return readCachedTenantIdForUser(userId);
+}
+
 /** Preferência: sessão/tenant-info; fallback: último tenant gravado para este usuário. */
 export function resolveTenantIdForFinance(
   tenantFromSession: string | null | undefined,
