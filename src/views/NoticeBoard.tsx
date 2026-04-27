@@ -255,14 +255,26 @@ export default function NoticeBoard({ isAdmin, tenantData, setActiveTab }: { isA
   async function deleteNotice(id: string) {
     if (!confirm('Deseja realmente excluir este aviso?')) return;
     try {
-      const { error } = await supabase
-        .from('mural_avisos')
-        .delete()
-        .eq('id', id);
-      if (error) throw error;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        alert('Sessão expirada. Faça login novamente.');
+        return;
+      }
+      const response = await fetch(`/api/notices/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Não foi possível excluir o aviso.');
+      }
       fetchNotices();
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Error deleting notice:', error);
+      const msg = error instanceof Error ? error.message : 'Erro ao excluir aviso.';
+      alert(msg);
     }
   }
 

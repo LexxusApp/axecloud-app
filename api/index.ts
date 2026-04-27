@@ -951,6 +951,64 @@ async function startServer() {
     }
   });
 
+  /** Mesmo conjunto de tenant_ids que o POST tenta ao publicar — aviso só pode ser apagado pelo líder dono daquele tenant_id. */
+  async function leaderMayDeleteMuralNotice(zeladorId: string, noticeTenantId: string): Promise<boolean> {
+    const { data: pl } = await supabaseAdmin
+      .from("perfil_lider")
+      .select("id, tenant_id")
+      .eq("id", zeladorId)
+      .maybeSingle();
+    if (!pl?.id) return false;
+    let sub: { tenant_id?: string | null } | null = null;
+    const subRes = await supabaseAdmin.from("subscriptions").select("id, tenant_id").eq("id", zeladorId).maybeSingle();
+    if (!subRes.error) sub = subRes.data;
+    const resolvedLeader = await resolveLeaderId(zeladorId);
+    const tenantCandidates = [zeladorId, resolvedLeader, pl.tenant_id, sub?.tenant_id].filter(
+      (v): v is string => typeof v === "string" && v.length > 10
+    );
+    const uniqueTenants = [...new Set(tenantCandidates)];
+    const nt = String(noticeTenantId || "");
+    if (uniqueTenants.includes(nt)) return true;
+    try {
+      const rn = await resolveLeaderId(nt);
+      return uniqueTenants.includes(rn);
+    } catch {
+      return false;
+    }
+  }
+
+  app.delete("/api/notices/:id", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Não autorizado" });
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ error: "id obrigatório" });
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Sessão inválida" });
+      const zeladorId = authUserIdFromToken(user, token);
+      if (!zeladorId) return res.status(401).json({ error: "Sessão inválida (id do usuário ausente)." });
+
+      const { data: notice, error: nErr } = await supabaseAdmin
+        .from("mural_avisos")
+        .select("id, tenant_id")
+        .eq("id", id)
+        .maybeSingle();
+      if (nErr) throw nErr;
+      if (!notice) return res.status(404).json({ error: "Aviso não encontrado" });
+
+      const allowed = await leaderMayDeleteMuralNotice(zeladorId, String(notice.tenant_id || ""));
+      if (!allowed) return res.status(403).json({ error: "Sem permissão para excluir este aviso." });
+
+      const { error: delErr } = await supabaseAdmin.from("mural_avisos").delete().eq("id", id);
+      if (delErr) throw delErr;
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("[SERVER] DELETE /api/notices/:id:", error?.message || error);
+      res.status(500).json({ error: error.message || "Erro ao excluir aviso" });
+    }
+  });
+
   // API Route: Create Inventory Item (Almoxarifado) and Trigger Push
   app.post("/api/inventory", async (req, res) => {
     const { item, quantidade_atual, quantidade_minima, categoria, tenantId, autorId } = req.body;
