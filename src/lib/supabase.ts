@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // --- Supabase React StrictMode Lock Warning/Error Mitigation ---
 // React StrictMode double-mounts components in development, causing Supabase GoTrue to
@@ -51,7 +51,7 @@ console.error = (...args) => {
     return;
   }
   // Allow GoTrue's unhandled rejection to be swallowed if it's the specific lock error
-  if (args[0] && args[0].isAcquireTimeout) {
+  if (args[0] && (args[0] as { isAcquireTimeout?: boolean }).isAcquireTimeout) {
     return;
   }
   originalError(...args);
@@ -65,6 +65,68 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('Supabase credentials missing. Please check your .env file.');
 }
 
+const nativeFetch = globalThis.fetch.bind(globalThis);
+
+/** Rotas onde 401 indica sessão inválida e vale tentar refresh (não inclui /token para evitar recursão no fetch). */
+function isSupabaseRecoverable401(urlStr: string): boolean {
+  if (!supabaseUrl || !urlStr.includes(new URL(supabaseUrl).hostname)) return false;
+  if (urlStr.includes('/auth/v1/token')) return false;
+  return (
+    urlStr.includes('/rest/v1/') ||
+    urlStr.includes('/storage/v1/') ||
+    urlStr.includes('/auth/v1/user')
+  );
+}
+
+/**
+ * Fetch resiliente: em 401 tenta refresh da sessão uma vez e refaz o request.
+ * Se ainda falhar ou não houver sessão, força logout rápido (evita loading infinito no PWA).
+ */
+function createResilientFetch(getClient: () => SupabaseClient): typeof fetch {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    let response: Response;
+    try {
+      response = await nativeFetch(input, init);
+    } catch (err) {
+      // Falha de rede / abort — repassa; App pode mostrar estado offline
+      throw err;
+    }
+
+    if (response.status !== 401) return response;
+
+    const urlStr = typeof input === 'string' ? input : (input as Request).url;
+    if (!isSupabaseRecoverable401(urlStr)) return response;
+
+    const supabase = getClient();
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) {
+      void import('./logout').then((m) => m.performFastLogout());
+      return response;
+    }
+
+    const { error: refreshErr } = await supabase.auth.refreshSession();
+    if (refreshErr) {
+      void import('./logout').then((m) => m.performFastLogout());
+      return response;
+    }
+
+    try {
+      response = await nativeFetch(input, init);
+    } catch (err) {
+      throw err;
+    }
+
+    if (response.status === 401) {
+      void import('./logout').then((m) => m.performFastLogout());
+    }
+
+    return response;
+  };
+}
+
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co',
   supabaseAnonKey || 'placeholder-key',
@@ -73,7 +135,10 @@ export const supabase = createClient(
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: true,
-      storageKey: 'axecloud-auth-token'
-    }
-  }
+      storageKey: 'axecloud-auth-token',
+    },
+    global: {
+      fetch: createResilientFetch(() => supabase),
+    },
+  },
 );

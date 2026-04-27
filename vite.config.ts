@@ -51,15 +51,16 @@ export default defineConfig(({mode}) => {
           navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
             {
-              // GET same-origin: biblioteca, tenant-info, eventos, etc. — resposta imediata do cache + atualização em silêncio
+              // GET /api/* — rede primeiro (deploy novo invalida cache velho no PWA); fallback ao cache se offline/lento
               urlPattern: ({url, sameOrigin}) => sameOrigin && url.pathname.startsWith('/api/'),
-              handler: 'StaleWhileRevalidate',
+              handler: 'NetworkFirst',
               method: 'GET',
               options: {
-                cacheName: 'axecloud-api-swr',
+                cacheName: 'axecloud-api-network-first',
+                networkTimeoutSeconds: 12,
                 expiration: {
                   maxEntries: 80,
-                  maxAgeSeconds: 60 * 60 * 24 * 7,
+                  maxAgeSeconds: 60 * 60 * 12,
                   purgeOnQuotaError: true,
                 },
                 cacheableResponse: {
