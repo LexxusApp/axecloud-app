@@ -6,11 +6,11 @@ import axios from "axios";
 import { fileURLToPath } from "url";
 import cors from "cors";
 import webpush from "web-push";
-import * as MensZelador from "../src/lib/mensalidadeszeladorapi";
+import * as MensZelador from "./mensalidadeszeladorapi";
 import {
   normalizeQueryTenantId,
   resolveFinanceiroTenantScope,
-} from "../src/lib/resolveTenantForFinanceiroApi";
+} from "./resolveTenantForFinanceiroApi";
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);
@@ -2421,4 +2421,4 @@ export default async function handler(req: any, res: any) {
   }
 }
 
-// deploy-bump: 2026-04-27 — import mensalidadeszeladorapi (minúsculas) para Vercel/Linux (ERR_MODULE_NOT_FOUND)
+// deploy-bump: 2026-04-27 — mensalidadeszeladorapi + resolveTenant co-localizados em /api (sem ../src/lib no bundle Vercel)

@@ -7,11 +7,11 @@ import { fileURLToPath } from "url";
 import cors from "cors";
 import geoip from "geoip-lite";
 import webpush from "web-push";
-import * as MensZelador from "./src/lib/mensalidadeszeladorapi";
+import * as MensZelador from "./api/mensalidadeszeladorapi";
 import {
   normalizeQueryTenantId,
   resolveFinanceiroTenantScope,
-} from "./src/lib/resolveTenantForFinanceiroApi";
+} from "./api/resolveTenantForFinanceiroApi";
 
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);
