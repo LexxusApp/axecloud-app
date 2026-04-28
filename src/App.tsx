@@ -40,9 +40,37 @@ import { PwaInstallTopbarButton } from './components/PwaInstallTopbarButton';
 import { performFastLogout, performVersionBumpLogout } from './lib/logout';
 import { performEmergencyHardReload } from './lib/emergencyReload';
 
-const SYSTEM_VERSION = APP_VERSION; // force logout on update
+const SYSTEM_VERSION = `${APP_VERSION}-sessionfix1`; // force logout on update
 
 const FILHO_ALLOWED_TABS = new Set(['profile', 'perfil', 'financial', 'calendar', 'library', 'store', 'mural']);
+const FILHO_FLAG_KEY = 'axecloud_is_filho';
+const FILHO_FLAG_USER_KEY = 'axecloud_is_filho_user_id';
+
+function readPersistedFilhoFlag(userId?: string | null) {
+  try {
+    const isFilho = localStorage.getItem(FILHO_FLAG_KEY) === 'true';
+    if (!isFilho) return false;
+    if (!userId) return true;
+    const flaggedUserId = localStorage.getItem(FILHO_FLAG_USER_KEY);
+    return !flaggedUserId || flaggedUserId === userId;
+  } catch {
+    return false;
+  }
+}
+
+function persistFilhoFlag(isFilho: boolean, userId?: string | null) {
+  try {
+    if (isFilho) {
+      localStorage.setItem(FILHO_FLAG_KEY, 'true');
+      if (userId) localStorage.setItem(FILHO_FLAG_USER_KEY, userId);
+      return;
+    }
+    localStorage.removeItem(FILHO_FLAG_KEY);
+    localStorage.removeItem(FILHO_FLAG_USER_KEY);
+  } catch {
+    // no-op
+  }
+}
 
 function normalizeFilhoTab(tab: string) {
   return FILHO_ALLOWED_TABS.has(tab) ? tab : 'profile';
@@ -79,6 +107,7 @@ export default function App() {
   const [filhoFotoUrl, setFilhoFotoUrl] = useState<string | null>(null);
   /** Falha ao recuperar tenant após API + fallback (evita shell “zumbi”). */
   const [tenantRecoveryFailed, setTenantRecoveryFailed] = useState(false);
+  const [isSessionHydrating, setIsSessionHydrating] = useState(false);
   const lastAuthUserIdRef = useRef<string | null>(null);
 
   const isFilhoForPush = userRole === 'filho';
@@ -122,13 +151,15 @@ export default function App() {
         return false;
       }
 
+      const persistedFilho = readPersistedFilhoFlag(userId);
       let tid = readCachedTenantIdForUser(userId);
       if (!tid) {
         tid = await resolveTenantFromSupabase(userId, userEmail ?? undefined);
         if (tid) writeCachedTenantIdForUser(userId, tid);
       }
 
-      const isFilhoAuth = isFilhoIdentity(fresh.user, undefined, authRole);
+      const isFilhoAuth = persistedFilho || isFilhoIdentity(fresh.user, undefined, authRole);
+      persistFilhoFlag(isFilhoAuth, userId);
 
       if (tid) {
         setSession(fresh);
@@ -178,7 +209,8 @@ export default function App() {
 
   const loadAllTenantData = async (userId: string, userEmail?: string, authRole?: string) => {
     let retries = 5;
-    const isFilhoAuth = isFilhoIdentity(null, userEmail, authRole);
+    const isFilhoAuth = readPersistedFilhoFlag(userId) || isFilhoIdentity(null, userEmail, authRole);
+    persistFilhoFlag(isFilhoAuth, userId);
 
     const cachedSnap = peekCachedTenantId(userId);
     if (cachedSnap) {
@@ -228,12 +260,13 @@ export default function App() {
         const rawRole = (data.role || 'admin').toLowerCase().trim();
         const role: 'admin' | 'filho' = rawRole === 'filho' || isFilhoAuth ? 'filho' : 'admin';
         setUserRole(role);
+        persistFilhoFlag(role === 'filho', userId);
         
         // 2. Tenant Info
         const plan = (data.plan || 'axe').toLowerCase().trim();
         const isGlobalAdmin = !!data.is_admin_global;
         let nome = data.nome_terreiro || 'Meu Terreiro';
-        let tenantId = data.tenant_id || userId;
+        let tenantId = role === 'filho' ? (data.tenant_id || '') : (data.tenant_id || userId);
         let tenantFotoUrl = data.foto_url;
 
           // Filhos podem acessar direto sem passar pelo Dashboard do zelador.
@@ -292,14 +325,16 @@ export default function App() {
         setTenantData({ 
           nome, 
           plan, 
-          tenant_id: tenantId,
+          tenant_id: String(tenantId || '').trim() || undefined,
           expires_at: data.expires_at,
           status: data.status,
           foto_url: tenantFotoUrl,
           cargo: data.cargo ?? undefined,
           role: role
         });
-        writeCachedTenantIdForUser(userId, String(tenantId));
+        if (String(tenantId || '').trim()) {
+          writeCachedTenantIdForUser(userId, String(tenantId));
+        }
 
           setIsAdminGlobal(isGlobalAdmin);
 
@@ -437,6 +472,7 @@ export default function App() {
             // enquanto os dados do novo usuário ainda estão sendo carregados.
             setUserRole(null);
             setLoading(true);
+            setIsSessionHydrating(true);
             setTenantRecoveryFailed(false);
             setIsMobileOpen(false);
             const cachedImmediate = peekCachedTenantId(session.user.id);
@@ -449,7 +485,8 @@ export default function App() {
             }
             // Sempre inicia na Home após sessão válida; evita aba 'profile' órfã (sem filho)
             // da sessão anterior. Filhos de santo são reposicionados em loadAllTenantData.
-            const isFilhoAuth = isFilhoIdentity(session.user);
+            const isFilhoAuth = readPersistedFilhoFlag(session.user.id) || isFilhoIdentity(session.user);
+            persistFilhoFlag(isFilhoAuth, session.user.id);
             setActiveTab(isFilhoAuth ? 'profile' : 'dashboard');
             if (isFilhoAuth) {
               setUserRole('filho');
@@ -471,9 +508,11 @@ export default function App() {
           setSelectedChildId(null);
           setFilhoFotoUrl(null);
           setTenantRecoveryFailed(false);
+          setIsSessionHydrating(false);
           setActiveTab('dashboard');
           setIsMobileOpen(false);
           initializedRef.current = false;
+          persistFilhoFlag(false);
         }
       } catch (error: any) {
         if (error && error.message && (error.message.includes('stole it') || error.message.includes('Lock'))) {
@@ -499,6 +538,7 @@ export default function App() {
       } finally {
         if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
            setLoading(false);
+           setIsSessionHydrating(false);
         }
       }
     });
@@ -517,6 +557,28 @@ export default function App() {
       });
     }
   }, [loading, session, userRole]);
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    if (tenantData?.tenant_id) return;
+    const timer = window.setTimeout(async () => {
+      const {
+        data: { session: freshSession },
+      } = await supabase.auth.getSession();
+      if (!freshSession?.user) return;
+      if (tenantData?.tenant_id) return;
+      console.warn('[SESSION] tenant_id ausente após 3s — limpando sessão e redirecionando para login.');
+      try {
+        sessionStorage.clear();
+      } catch {
+        // no-op
+      }
+      persistFilhoFlag(false);
+      await supabase.auth.signOut({ scope: 'local' });
+      window.location.replace('/login');
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [session?.user?.id, tenantData?.tenant_id]);
 
   /** Se o tenant não veio do tenant-info/props, tenta perfil_lider / filhos (JWT) e atualiza o estado. */
   useEffect(() => {
@@ -697,7 +759,8 @@ export default function App() {
     return <SubscriptionLock plan={tenantData?.plan} />;
   }
 
-  if (loading || !userRole) {
+  const pendingFilhoHydration = !!session?.user && readPersistedFilhoFlag(session.user.id) && userRole !== 'filho';
+  if (loading || isSessionHydrating || !userRole || pendingFilhoHydration) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center relative overflow-hidden">
         <div 

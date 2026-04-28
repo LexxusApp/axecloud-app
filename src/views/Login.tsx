@@ -5,6 +5,23 @@ import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
 import { writeCachedTenantIdForUser } from '../lib/tenantCache';
 
+const FILHO_FLAG_KEY = 'axecloud_is_filho';
+const FILHO_FLAG_USER_KEY = 'axecloud_is_filho_user_id';
+
+function persistFilhoFlag(isFilho: boolean, userId?: string | null) {
+  try {
+    if (isFilho) {
+      localStorage.setItem(FILHO_FLAG_KEY, 'true');
+      if (userId) localStorage.setItem(FILHO_FLAG_USER_KEY, userId);
+      return;
+    }
+    localStorage.removeItem(FILHO_FLAG_KEY);
+    localStorage.removeItem(FILHO_FLAG_USER_KEY);
+  } catch {
+    // no-op
+  }
+}
+
 export default function Login() {
   const [loginType, setLoginType] = useState<'zelador' | 'filho'>('zelador');
   const [email, setEmail] = useState('');
@@ -54,6 +71,7 @@ export default function Login() {
 
     try {
       if (loginType === 'zelador') {
+        persistFilhoFlag(false);
         const { error } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -84,12 +102,14 @@ export default function Login() {
         });
 
         if (signInError) throw signInError;
+        persistFilhoFlag(true);
       }
 
       const {
         data: { session: postSession },
       } = await supabase.auth.getSession();
       if (postSession?.user) {
+        persistFilhoFlag(loginType === 'filho', postSession.user.id);
         try {
           const r = await fetch(
             `/api/tenant-info?userId=${encodeURIComponent(postSession.user.id)}&email=${encodeURIComponent(postSession.user.email || '')}`
