@@ -494,7 +494,7 @@ export default function PerfilFilho({ user, tenantData, setActiveTab }: PerfilFi
           <div className="flex-1 min-w-0 text-center lg:text-left space-y-3">
             <p className="text-[11px] font-black uppercase tracking-[0.35em] text-primary/90">Terreiro vinculado</p>
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-white tracking-tight leading-[1.1] break-words">
-              {tenantData?.nome || 'Meu Terreiro'}
+              {tenantData?.nome || 'Terreiro vinculado'}
             </h1>
             <p className="text-sm text-gray-400 max-w-xl mx-auto lg:mx-0">
               Portal do filho de santo — mensalidade, giras, mural e loja do Axé em um só lugar.

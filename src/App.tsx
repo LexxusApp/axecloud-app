@@ -40,7 +40,7 @@ import { PwaInstallTopbarButton } from './components/PwaInstallTopbarButton';
 import { performFastLogout, performVersionBumpLogout } from './lib/logout';
 import { performEmergencyHardReload } from './lib/emergencyReload';
 
-const SYSTEM_VERSION = `${APP_VERSION}-sessionfix1`; // force logout on update
+const SYSTEM_VERSION = `${APP_VERSION}-sessionfix2`; // force logout on update
 
 const FILHO_ALLOWED_TABS = new Set(['profile', 'perfil', 'financial', 'calendar', 'library', 'store', 'mural']);
 const FILHO_FLAG_KEY = 'axecloud_is_filho';
@@ -85,6 +85,7 @@ function isFilhoIdentity(user?: { email?: string | null; user_metadata?: any } |
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(true);
   const [subscriptionActive, setSubscriptionActive] = useState(true);
   const [isAdminGlobal, setIsAdminGlobal] = useState(false);
   const [isMasterActive, setIsMasterActive] = useState(false);
@@ -118,6 +119,7 @@ export default function App() {
   );
 
   const initializedRef = useRef(false);
+  const authFirstEventHandledRef = useRef(false);
   const loadingRef = useRef(loading);
   loadingRef.current = loading;
 
@@ -265,7 +267,7 @@ export default function App() {
         // 2. Tenant Info
         const plan = (data.plan || 'axe').toLowerCase().trim();
         const isGlobalAdmin = !!data.is_admin_global;
-        let nome = data.nome_terreiro || 'Meu Terreiro';
+        let nome = data.nome_terreiro || (role === 'filho' ? '' : 'Meu Terreiro');
         let tenantId = role === 'filho' ? (data.tenant_id || '') : (data.tenant_id || userId);
         let tenantFotoUrl = data.foto_url;
 
@@ -405,16 +407,35 @@ export default function App() {
   };
 
   useEffect(() => {
-    const initializeAuth = () => {
+    const markAuthInitialized = () => {
+      if (authFirstEventHandledRef.current) return;
+      authFirstEventHandledRef.current = true;
+      setIsInitializing(false);
+    };
+
+    const initializeAuth = async () => {
       const lastVersion = localStorage.getItem('axecloud_version');
 
       if (lastVersion !== SYSTEM_VERSION) {
         console.log('[SYSTEM] Nova versão detectada:', SYSTEM_VERSION);
         void performVersionBumpLogout(SYSTEM_VERSION);
+        return;
+      }
+
+      const {
+        data: { session: initialSession },
+      } = await supabase.auth.getSession();
+      if (initialSession?.user) {
+        setSession(initialSession);
+        lastAuthUserIdRef.current = initialSession.user.id;
+        setLoading(true);
+        setIsSessionHydrating(true);
+      } else {
+        setSession(null);
       }
     };
 
-    initializeAuth();
+    void initializeAuth();
 
     // 2. Auth Listener
     // This will trigger INITIAL_SESSION immediately on subscribe
@@ -536,10 +557,13 @@ export default function App() {
           });
         }
       } finally {
+        const canResolveInitialization =
+          event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT';
         if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
            setLoading(false);
            setIsSessionHydrating(false);
         }
+        if (canResolveInitialization) markAuthInitialized();
       }
     });
 
@@ -686,7 +710,7 @@ export default function App() {
     }
   };
 
-  if (loading) {
+  if (isInitializing || loading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center relative overflow-hidden">
         <div 

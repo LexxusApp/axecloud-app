@@ -136,6 +136,7 @@ export const supabase = createClient(
       persistSession: true,
       detectSessionInUrl: true,
       storageKey: 'axecloud-auth-token',
+      storage: typeof window !== 'undefined' ? window.localStorage : undefined,
     },
     global: {
       fetch: createResilientFetch(() => supabase),
