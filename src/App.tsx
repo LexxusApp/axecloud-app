@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';
@@ -49,6 +49,11 @@ const FILHO_ALLOWED_TABS = new Set(['profile', 'perfil', 'financial', 'calendar'
 const FILHO_FLAG_KEY = 'axecloud_is_filho';
 const FILHO_FLAG_USER_KEY = 'axecloud_is_filho_user_id';
 const TENANT_ANCHOR_KEY = 'tenant_id';
+const USER_ROLE_KEY = 'axecloud_user_role';
+let isSessionReadyGlobal = false;
+export function getIsSessionReady() {
+  return isSessionReadyGlobal;
+}
 
 function readTenantAnchorFromStorage() {
   try {
@@ -68,6 +73,28 @@ function writeTenantAnchorToStorage(tenantId?: string | null) {
     } else {
       localStorage.removeItem(TENANT_ANCHOR_KEY);
     }
+  } catch {
+    // no-op
+  }
+}
+
+function readUserRoleAnchor() {
+  try {
+    const raw = String(localStorage.getItem(USER_ROLE_KEY) || '').toLowerCase().trim();
+    if (raw === 'filho' || raw === 'admin') return raw;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function writeUserRoleAnchor(role?: 'admin' | 'filho' | null) {
+  try {
+    if (!role) {
+      localStorage.removeItem(USER_ROLE_KEY);
+      return;
+    }
+    localStorage.setItem(USER_ROLE_KEY, role);
   } catch {
     // no-op
   }
@@ -112,6 +139,7 @@ function isFilhoIdentity(user?: { email?: string | null; user_metadata?: any } |
 export default function App() {
   // Prioridade máxima: lê âncora de tenant no topo do ciclo de render, antes de effects.
   const earlyTenantAnchor = readTenantAnchorFromStorage();
+  const earlyRoleAnchor = readUserRoleAnchor();
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -142,6 +170,10 @@ export default function App() {
   const roleRecoveryOnceForUserRef = useRef<string | null>(null);
   const [showConnectionResetCta, setShowConnectionResetCta] = useState(false);
   const [tenantAnchorId, setTenantAnchorId] = useState<string | null>(earlyTenantAnchor);
+  const [roleAnchor, setRoleAnchor] = useState<'admin' | 'filho' | null>(
+    earlyRoleAnchor === 'filho' || earlyRoleAnchor === 'admin' ? earlyRoleAnchor : null
+  );
+  const [isSessionReady, setIsSessionReady] = useState(false);
   const lastAuthUserIdRef = useRef<string | null>(null);
 
   const isFilhoForPush = userRole === 'filho';
@@ -157,8 +189,11 @@ export default function App() {
   loadingRef.current = loading;
 
   const pendingFilhoHydration = useMemo(
-    () => !!session?.user && readPersistedFilhoFlag(session.user.id) && userRole !== 'filho',
-    [session?.user, userRole]
+    () =>
+      !!session?.user &&
+      (readPersistedFilhoFlag(session.user.id) || roleAnchor === 'filho') &&
+      (userRole !== 'filho' || tenantData?.role !== 'filho'),
+    [session?.user, userRole, roleAnchor, tenantData?.role]
   );
 
   const effectiveTenantId = useMemo(
@@ -188,6 +223,16 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    const ready =
+      !!session?.user &&
+      !!userRole &&
+      !!effectiveTenantId &&
+      !(roleAnchor === 'filho' && userRole !== 'filho');
+    isSessionReadyGlobal = ready;
+    setIsSessionReady(ready);
+  }, [session?.user, userRole, effectiveTenantId, roleAnchor]);
+
+  useEffect(() => {
     const liveTenant = String(tenantData?.tenant_id || '').trim();
     if (liveTenant) {
       writeTenantAnchorToStorage(liveTenant);
@@ -199,6 +244,18 @@ export default function App() {
       setTenantAnchorId(null);
     }
   }, [tenantData?.tenant_id, session?.user?.id]);
+
+  useEffect(() => {
+    if (userRole) {
+      writeUserRoleAnchor(userRole);
+      setRoleAnchor(userRole);
+      return;
+    }
+    if (!session?.user) {
+      writeUserRoleAnchor(null);
+      setRoleAnchor(null);
+    }
+  }, [userRole, session?.user?.id]);
 
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -241,14 +298,6 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, []);
 
-  /** Login vive na raiz "/"; "/login" só espelha a SPA — normaliza a URL sem recarregar. */
-  useLayoutEffect(() => {
-    const { pathname, search, hash } = window.location;
-    if (pathname === '/login' || pathname === '/login/') {
-      window.history.replaceState(null, '', `/${search}${hash}`);
-    }
-  }, []);
-
   /**
    * Após falha do tenant-info ou timeout: valida sessão real com getSession(),
    * hidrata tenant do cache ou resolveTenantFromSupabase. Filho sem vínculo não recebe tenant_id falso.
@@ -284,6 +333,8 @@ export default function App() {
       if (tid) {
         setSession(fresh);
         setUserRole(isFilhoAuth ? 'filho' : 'admin');
+        writeUserRoleAnchor(isFilhoAuth ? 'filho' : 'admin');
+        setRoleAnchor(isFilhoAuth ? 'filho' : 'admin');
         setTenantData({
           nome: '',
           plan: 'axe',
@@ -305,6 +356,8 @@ export default function App() {
         writeCachedTenantIdForUser(userId, userId);
         setSession(fresh);
         setUserRole('admin');
+        writeUserRoleAnchor('admin');
+        setRoleAnchor('admin');
         const superAdm = fresh.user.email === 'lucasilvasiqueira@outlook.com.br';
         setTenantData({
           nome: '',
@@ -380,6 +433,8 @@ export default function App() {
         const rawRole = (data.role || 'admin').toLowerCase().trim();
         const role: 'admin' | 'filho' = rawRole === 'filho' || isFilhoAuth ? 'filho' : 'admin';
         setUserRole(role);
+        writeUserRoleAnchor(role);
+        setRoleAnchor(role);
         persistFilhoFlag(role === 'filho', userId);
         
         // 2. Tenant Info
@@ -648,6 +703,8 @@ export default function App() {
           setTenantData(null);
           writeTenantAnchorToStorage(null);
           setTenantAnchorId(null);
+          writeUserRoleAnchor(null);
+          setRoleAnchor(null);
           setSelectedChildId(null);
           setFilhoFotoUrl(null);
           setTenantRecoveryFailed(false);
@@ -843,7 +900,7 @@ export default function App() {
   };
 
   const connectionEmergencyCta =
-    showConnectionResetCta && blockingSpinnerActive && !tenantAnchorId ? (
+    showConnectionResetCta && blockingSpinnerActive && !tenantAnchorId && !readTenantAnchorFromStorage() ? (
       <button
         type="button"
         onClick={() => void performEmergencyClientReset()}
@@ -938,6 +995,9 @@ export default function App() {
           }}
         />
         <Loader2 className="w-12 h-12 text-primary animate-spin relative z-10" />
+        <p className="relative z-10 mt-6 text-sm font-bold uppercase tracking-widest text-gray-400">
+          Carregando Perfil...
+        </p>
         {connectionEmergencyCta}
       </div>
     );
@@ -1061,7 +1121,7 @@ export default function App() {
 
     switch (activeTab) {
       case 'dashboard': 
-        return <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setSelectedChildId={setSelectedChildId} systemVersion={SYSTEM_VERSION} />;
+        return <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setSelectedChildId={setSelectedChildId} systemVersion={SYSTEM_VERSION} isSessionReady={isSessionReady} />;
       case 'children': 
         return <Children setActiveTab={navigateToTab} user={session.user} setSelectedChildId={setSelectedChildId} tenantData={tenantData} />;
       case 'inventory': 
@@ -1072,7 +1132,7 @@ export default function App() {
         /* Neste ramo o usuário nunca é filho (filho tem switch próprio acima) — sempre gestão do terreiro */
         return <NoticeBoard isAdmin tenantData={tenantData} setActiveTab={navigateToTab} />;
       case 'financial': 
-        return <Financial userRole={userRole} userId={session.user.id} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setActiveTab={navigateToTab} />;
+        return <Financial userRole={userRole} userId={session.user.id} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setActiveTab={navigateToTab} isSessionReady={isSessionReady} />;
       case 'settings': 
         return <Settings user={session.user} session={session} onRefresh={refreshAllData} tenantData={tenantData} setActiveTab={navigateToTab} />;
       case 'library':
@@ -1080,17 +1140,17 @@ export default function App() {
       case 'store':
         return <Store userRole={userRole} tenantData={tenantData} userId={session.user.id} isAdminGlobal={isAdminGlobal} setActiveTab={navigateToTab} />;
       case 'admin': 
-        return isAdminGlobal ? <Admin session={session} tenantData={tenantData} setActiveTab={navigateToTab} /> : <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} tenantData={tenantData} systemVersion={SYSTEM_VERSION} />;
+        return isAdminGlobal ? <Admin session={session} tenantData={tenantData} setActiveTab={navigateToTab} /> : <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} tenantData={tenantData} systemVersion={SYSTEM_VERSION} isSessionReady={isSessionReady} />;
       case 'profile':
       case 'perfil':
         if (!selectedChildId) {
-          return <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setSelectedChildId={setSelectedChildId} systemVersion={SYSTEM_VERSION} />;
+          return <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} tenantData={tenantData} isAdminGlobal={isAdminGlobal} setSelectedChildId={setSelectedChildId} systemVersion={SYSTEM_VERSION} isSessionReady={isSessionReady} />;
         }
         return <ChildProfile childId={selectedChildId} setActiveTab={navigateToTab} user={session.user} tenantData={tenantData} isSelfView={false} />;
       case 'subscription':
         return <Subscription session={session} tenantData={tenantData} onPlanUpdated={refreshAllData} setActiveTab={navigateToTab} />;
       default: 
-        return <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} systemVersion={SYSTEM_VERSION} />;
+        return <Dashboard setActiveTab={navigateToTab} user={session.user} userRole={userRole} systemVersion={SYSTEM_VERSION} isSessionReady={isSessionReady} />;
     }
   };
 

@@ -59,9 +59,10 @@ interface FinancialProps {
   tenantData?: any;
   isAdminGlobal?: boolean;
   setActiveTab: (tab: string) => void;
+  isSessionReady?: boolean;
 }
 
-export default function Financial({ userRole, userId, tenantData, isAdminGlobal, setActiveTab }: FinancialProps) {
+export default function Financial({ userRole, userId, tenantData, isAdminGlobal, setActiveTab, isSessionReady = false }: FinancialProps) {
   // Não-filhos são sempre gestores do terreiro (admin, vita, cortesia, premium, oro, axe).
   // O plano controla QUAIS funções de gestão estão disponíveis (via hasPlanAccess), não SE o usuário é gestor.
   const isAdmin = userRole !== 'filho';
@@ -115,7 +116,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
   });
 
   const financialTxKey =
-    userId && !(isAxePlan && userRole !== 'filho')
+    userId && tenantId && isSessionReady && !(isAxePlan && userRole !== 'filho')
       ? (['financial-transactions', tenantId, userId, userRole] as const)
       : null;
 

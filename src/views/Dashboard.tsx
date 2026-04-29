@@ -161,9 +161,10 @@ interface DashboardProps {
   isAdminGlobal?: boolean;
   setSelectedChildId?: (id: string) => void;
   systemVersion?: string;
+  isSessionReady?: boolean;
 }
 
-export default function Dashboard({ setActiveTab, user, userRole = 'admin', tenantData, isAdminGlobal = false, setSelectedChildId, systemVersion = '1.0.0' }: DashboardProps) {
+export default function Dashboard({ setActiveTab, user, userRole = 'admin', tenantData, isAdminGlobal = false, setSelectedChildId, systemVersion = '1.0.0', isSessionReady = false }: DashboardProps) {
   const tenantId = useMemo(
     () => resolveTenantIdForFinance(tenantData?.tenant_id, user?.id),
     [tenantData?.tenant_id, user?.id]
@@ -258,7 +259,10 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
     };
   }, [transactions]);
 
-  const dashboardSwrKey = user?.id ? (['dashboard-finance', user.id, tenantId, userRole] as const) : null;
+  const dashboardSwrKey =
+    user?.id && tenantId && isSessionReady
+      ? (['dashboard-finance', user.id, tenantId, userRole] as const)
+      : null;
   const { data: dashboardBundle, isLoading, mutate } = useSWR(
     dashboardSwrKey,
     () => fetchDashboardFinanceBundle(user!, tenantId, userRole, tenantData?.tenant_id),
