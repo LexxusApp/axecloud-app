@@ -74,13 +74,8 @@ export default function Settings({ user, session, tenantData, onRefresh, setActi
       if (profileData) {
         setProfile(profileData);
       } else {
-        // Initialize with default values if no profile found
-        setProfile({
-          id: user.id,
-          email: user.email,
-          nome_terreiro: 'Meu Terreiro',
-          cargo: 'Babalorixá'
-        });
+        setProfile(null);
+        setError('Perfil do terreiro não encontrado para esta conta.');
       }
     } catch (error: any) {
       console.error('[DEBUG] Settings fetchData error:', error);

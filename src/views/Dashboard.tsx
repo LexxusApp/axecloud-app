@@ -284,7 +284,7 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
 
   if (loading) return <div className="h-[70vh] flex items-center justify-center"><LuxuryLoading /></div>;
 
-  const terreiroNome = tenantData?.nome?.trim() || 'Meu Terreiro';
+  const terreiroNome = tenantData?.nome?.trim() || '';
   const headerRoleLine =
     userRole === 'filho' ? 'Filho de Santo' : (tenantData?.cargo?.trim() || null);
 

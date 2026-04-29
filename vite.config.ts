@@ -47,31 +47,36 @@ export default defineConfig(({mode}) => {
         workbox: {
           /** Bump ao mudar estratégia de cache — força precache/runtime novos e abandona caches antigos (cleanupOutdatedCaches). */
           /** Bump para publicar nova regra NetworkOnly em /login (logout PWA). */
-          cacheId: 'axecloud-v2-auth',
+          cacheId: 'axecloud-v100',
           cleanupOutdatedCaches: true,
           importScripts: ['/sw-push.js'],
           // Evita que o fallback do SPA (index.html) intercepte navegação para /api/*
           navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
             {
-              // Tela de autenticação: nunca servir HTML/bundle em cache (evita “logout falso” no PWA).
-              urlPattern: ({request, url, sameOrigin}) =>
-                sameOrigin &&
-                request.mode === 'navigate' &&
-                (url.pathname === '/login' || url.pathname === '/login/'),
-              handler: 'NetworkOnly',
+              // Navegação HTML: rede primeiro e sem persistir HTML no cache.
+              urlPattern: ({request, sameOrigin}) => sameOrigin && request.mode === 'navigate',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'axecloud-html-network-first-v100',
+                networkTimeoutSeconds: 8,
+                // Mantém a estratégia NetworkFirst, mas bloqueia gravação de HTML em cache.
+                plugins: [{
+                  cacheWillUpdate: async () => null,
+                }],
+              },
             },
             {
-              // GET /api/* — rede primeiro (deploy novo invalida cache velho no PWA); fallback ao cache se offline/lento
-              urlPattern: ({url, sameOrigin}) => sameOrigin && url.pathname.startsWith('/api/'),
+              // Todas as rotas same-origin (exceto navegação HTML): rede primeiro.
+              urlPattern: ({request, sameOrigin}) => sameOrigin && request.mode !== 'navigate',
               handler: 'NetworkFirst',
               method: 'GET',
               options: {
-                cacheName: 'axecloud-api-network-first-v2',
+                cacheName: 'axecloud-runtime-network-first-v100',
                 networkTimeoutSeconds: 12,
                 expiration: {
-                  maxEntries: 80,
-                  maxAgeSeconds: 60 * 60 * 12,
+                  maxEntries: 120,
+                  maxAgeSeconds: 60 * 60 * 6,
                   purgeOnQuotaError: true,
                 },
                 cacheableResponse: {

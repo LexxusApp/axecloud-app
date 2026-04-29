@@ -7,6 +7,14 @@ import App from './App.tsx';
 import './index.css';
 
 let swRegistration: ServiceWorkerRegistration | undefined;
+let reloadingFromSwUpdate = false;
+
+function hardReloadForSwUpdate() {
+  if (reloadingFromSwUpdate) return;
+  reloadingFromSwUpdate = true;
+  // Compatibilidade explícita com navegadores antigos/PWA embarcado.
+  window.location.reload(true as any);
+}
 
 function checkServiceWorkerUpdate() {
   void swRegistration?.update().catch(() => {
@@ -18,7 +26,7 @@ registerSW({
   immediate: true,
   onNeedRefresh() {
     // Nova versão publicada — reload completo para não ficar preso em bundle/cache antigo
-    window.location.reload();
+    hardReloadForSwUpdate();
   },
   onRegisteredSW(swUrl, registration) {
     swRegistration = registration;
@@ -38,6 +46,12 @@ document.addEventListener('visibilitychange', () => {
     checkServiceWorkerUpdate();
   }
 });
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    hardReloadForSwUpdate();
+  });
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

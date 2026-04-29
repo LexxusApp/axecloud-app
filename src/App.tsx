@@ -40,7 +40,7 @@ import { PwaInstallTopbarButton } from './components/PwaInstallTopbarButton';
 import { performFastLogout, performVersionBumpLogout } from './lib/logout';
 import { performEmergencyHardReload } from './lib/emergencyReload';
 
-const SYSTEM_VERSION = `${APP_VERSION}-sessionfix2`; // force logout on update
+const SYSTEM_VERSION = `${APP_VERSION}-sessionfix3`; // force logout on update
 
 const FILHO_ALLOWED_TABS = new Set(['profile', 'perfil', 'financial', 'calendar', 'library', 'store', 'mural']);
 const FILHO_FLAG_KEY = 'axecloud_is_filho';
