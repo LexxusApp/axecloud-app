@@ -165,9 +165,13 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ setActiveTab, user, userRole = 'admin', tenantData, isAdminGlobal = false, setSelectedChildId, systemVersion = '1.0.0', isSessionReady = false }: DashboardProps) {
+  const initialTenantFromStorage = typeof window !== 'undefined'
+    ? String(localStorage.getItem('tenant_id') || '').trim()
+    : '';
+  const [authLoading, setAuthLoading] = useState(true);
   const tenantId = useMemo(
-    () => resolveTenantIdForFinance(tenantData?.tenant_id, user?.id),
-    [tenantData?.tenant_id, user?.id]
+    () => resolveTenantIdForFinance(tenantData?.tenant_id || initialTenantFromStorage, user?.id),
+    [tenantData?.tenant_id, user?.id, initialTenantFromStorage]
   );
   /** Lançamentos da tabela `financeiro` (via `/api/transactions`), no mesmo formato da página Financeiro. */
   const [transactions, setTransactions] = useState<any[]>([]);
@@ -290,6 +294,28 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
   }, [mutate]);
 
   const loading = Boolean(dashboardSwrKey && isLoading && !dashboardBundle);
+
+  useEffect(() => {
+    let cancelled = false;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (cancelled) return;
+      const hasUser = !!data.session?.user;
+      setAuthLoading(false);
+      if (!hasUser && !loading) {
+        window.location.href = '/login';
+      }
+    }).catch(() => {
+      if (cancelled) return;
+      setAuthLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loading]);
+
+  if (!user && authLoading) {
+    return <div className="h-[70vh] flex items-center justify-center"><LuxuryLoading /></div>;
+  }
 
   if (loading) return <div className="h-[70vh] flex items-center justify-center"><LuxuryLoading /></div>;
 

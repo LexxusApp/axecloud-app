@@ -66,6 +66,17 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
+const SESSION_EXPIRED_EVENT = 'axecloud:session-expired';
+
+function isJwtExpiredMessage(value: unknown): boolean {
+  const msg = String((value as { message?: string })?.message || value || '').toLowerCase();
+  return msg.includes('jwt') && msg.includes('expir');
+}
+
+function emitSessionExpired(reason: string) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, { detail: { reason } }));
+}
 
 /** Rotas onde 401 indica sessão inválida e vale tentar refresh (não inclui /token para evitar recursão no fetch). */
 function isSupabaseRecoverable401(urlStr: string): boolean {
@@ -103,13 +114,17 @@ function createResilientFetch(getClient: () => SupabaseClient): typeof fetch {
       data: { session },
     } = await supabase.auth.getSession();
     if (!session) {
-      void import('./logout').then((m) => m.performFastLogout());
+      emitSessionExpired('session_missing_on_401');
       return response;
     }
 
     const { error: refreshErr } = await supabase.auth.refreshSession();
     if (refreshErr) {
-      void import('./logout').then((m) => m.performFastLogout());
+      if (isJwtExpiredMessage(refreshErr)) {
+        emitSessionExpired('jwt_expired');
+        return response;
+      }
+      emitSessionExpired('refresh_failed');
       return response;
     }
 
@@ -120,7 +135,7 @@ function createResilientFetch(getClient: () => SupabaseClient): typeof fetch {
     }
 
     if (response.status === 401) {
-      void import('./logout').then((m) => m.performFastLogout());
+      emitSessionExpired('retry_401');
     }
 
     return response;

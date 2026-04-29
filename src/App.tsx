@@ -43,7 +43,6 @@ import {
   emergencyAuthCircuitBreaker,
   performEmergencyClientReset,
 } from './lib/logout';
-import { performEmergencyHardReload } from './lib/emergencyReload';
 
 const FILHO_ALLOWED_TABS = new Set(['profile', 'perfil', 'financial', 'calendar', 'library', 'store', 'mural']);
 const FILHO_FLAG_KEY = 'axecloud_is_filho';
@@ -166,6 +165,7 @@ export default function App() {
   /** Falha ao recuperar tenant após API + fallback (evita shell “zumbi”). */
   const [tenantRecoveryFailed, setTenantRecoveryFailed] = useState(false);
   const [isSessionHydrating, setIsSessionHydrating] = useState(false);
+  const [sessionExpiredState, setSessionExpiredState] = useState(false);
   /** Evita recoverTenantAfterFailure em loop quando userRole não hidrata. */
   const roleRecoveryOnceForUserRef = useRef<string | null>(null);
   const [showConnectionResetCta, setShowConnectionResetCta] = useState(false);
@@ -283,6 +283,40 @@ export default function App() {
       window.clearTimeout(id);
     };
   }, [blockingSpinnerActive]);
+
+  useEffect(() => {
+    const handleSessionExpired = async () => {
+      try {
+        localStorage.clear();
+        sessionStorage.clear();
+        localStorage.setItem('axecloud_version', SYSTEM_VERSION);
+      } catch {
+        // no-op
+      }
+      persistFilhoFlag(false);
+      writeTenantAnchorToStorage(null);
+      writeUserRoleAnchor(null);
+      setTenantAnchorId(null);
+      setRoleAnchor(null);
+      setTenantData(null);
+      setUserRole(null);
+      setSessionExpiredState(true);
+      setLoading(false);
+      setIsInitializing(false);
+      setIsSessionHydrating(false);
+      try {
+        await supabase.auth.signOut({ scope: 'local' });
+      } catch {
+        // no-op
+      }
+    };
+
+    const onExpired = () => {
+      void handleSessionExpired();
+    };
+    window.addEventListener('axecloud:session-expired', onExpired as EventListener);
+    return () => window.removeEventListener('axecloud:session-expired', onExpired as EventListener);
+  }, []);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -715,6 +749,11 @@ export default function App() {
           persistFilhoFlag(false);
         }
       } catch (error: any) {
+        const errorMessage = String(error?.message || '').toLowerCase();
+        if (errorMessage.includes('jwt') && errorMessage.includes('expir')) {
+          window.dispatchEvent(new CustomEvent('axecloud:session-expired', { detail: { source: 'auth_listener' } }));
+          return;
+        }
         if (error && error.message && (error.message.includes('stole it') || error.message.includes('Lock'))) {
           if (session?.user) {
             void recoverTenantAfterFailure(
@@ -848,37 +887,12 @@ export default function App() {
     }
   }, [userRole, activeTab]);
 
-  /** Loading infinito (bundle/SW antigo ou sessão inconsistente): uma recarga forçada por sessão de aba. */
+  /** Loading prolongado: evita recarga automática para não entrar em loop no mobile. */
   useEffect(() => {
-    if (!loading) {
-      try {
-        sessionStorage.removeItem('axecloud_stuck_reload_once');
-      } catch {
-        /* */
-      }
-      return;
-    }
-    const timer = window.setTimeout(async () => {
+    if (!loading) return;
+    const timer = window.setTimeout(() => {
       if (!loadingRef.current) return;
-      try {
-        if (sessionStorage.getItem('axecloud_stuck_reload_once') === '1') return;
-      } catch {
-        /* */
-      }
-      const {
-        data: { session: s },
-      } = await supabase.auth.getSession();
-      if (!s?.user) {
-        console.warn('[SYSTEM] Loading prolongado com sessão vazia — recarga de emergência.');
-      } else {
-        console.warn('[SYSTEM] Loading prolongado — recarga de emergência (cache/SW).');
-      }
-      try {
-        sessionStorage.setItem('axecloud_stuck_reload_once', '1');
-      } catch {
-        /* */
-      }
-      performEmergencyHardReload();
+      setShowConnectionResetCta(true);
     }, 32000);
     return () => window.clearTimeout(timer);
   }, [loading]);
@@ -909,6 +923,36 @@ export default function App() {
         ERRO DE CONEXÃO: CLIQUE AQUI PARA RESETAR
       </button>
     ) : null;
+
+  if (sessionExpiredState) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center p-6 relative overflow-hidden">
+        <div
+          className="fixed inset-0 bg-cover bg-center bg-no-repeat pointer-events-none"
+          style={{
+            backgroundImage: `linear-gradient(rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.72)), url('/login-bg.png')`,
+            backgroundAttachment: 'fixed',
+          }}
+        />
+        <div className="relative z-10 max-w-md w-full bg-card border border-white/10 rounded-[32px] p-8 text-center space-y-6">
+          <ShieldAlert className="w-14 h-14 text-red-500 mx-auto" />
+          <h2 className="text-xl font-black text-white tracking-tight">Sessão expirada</h2>
+          <p className="text-sm text-gray-400 font-medium">
+            Sua sessão não pôde ser recuperada com segurança. Faça login novamente para continuar.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = '/login';
+            }}
+            className="w-full py-4 bg-primary text-black font-black rounded-2xl hover:opacity-95 transition-opacity"
+          >
+            Fazer Login Novamente
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (isInitializing || loading) {
     return (
