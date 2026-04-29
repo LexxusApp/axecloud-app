@@ -343,6 +343,13 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
           <p className="text-xs font-black uppercase tracking-[0.25em] text-[#D4AF37] mb-1">{greetingEmoji} {greeting}, {terreiroNome.split(' ')[0]}</p>
           <h1 className="text-2xl font-bold tracking-tight text-white leading-tight">Axé em Movimento</h1>
           <p className="text-[11px] text-gray-500 mt-1 font-medium">{greetingSubtitle}</p>
+          <button
+            type="button"
+            onClick={() => void mutate()}
+            className="mt-3 inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
+          >
+            Atualizar dados
+          </button>
         </div>
         {/* Avatar + Sino — lg+ apenas: evita dois painéis + dois canais Realtime entre sm e lg (header mobile ainda visível) */}
         <div className="hidden lg:flex items-center gap-3 shrink-0">

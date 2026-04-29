@@ -285,6 +285,10 @@ export default function App() {
   }, [blockingSpinnerActive]);
 
   useEffect(() => {
+    document.body.style.overscrollBehaviorY = 'contain';
+  }, []);
+
+  useEffect(() => {
     const handleSessionExpired = async () => {
       try {
         localStorage.clear();
