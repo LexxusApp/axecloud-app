@@ -48,6 +48,30 @@ import { performEmergencyHardReload } from './lib/emergencyReload';
 const FILHO_ALLOWED_TABS = new Set(['profile', 'perfil', 'financial', 'calendar', 'library', 'store', 'mural']);
 const FILHO_FLAG_KEY = 'axecloud_is_filho';
 const FILHO_FLAG_USER_KEY = 'axecloud_is_filho_user_id';
+const TENANT_ANCHOR_KEY = 'tenant_id';
+
+function readTenantAnchorFromStorage() {
+  try {
+    const raw = localStorage.getItem(TENANT_ANCHOR_KEY);
+    const value = String(raw || '').trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeTenantAnchorToStorage(tenantId?: string | null) {
+  const value = String(tenantId || '').trim();
+  try {
+    if (value) {
+      localStorage.setItem(TENANT_ANCHOR_KEY, value);
+    } else {
+      localStorage.removeItem(TENANT_ANCHOR_KEY);
+    }
+  } catch {
+    // no-op
+  }
+}
 
 function readPersistedFilhoFlag(userId?: string | null) {
   try {
@@ -86,6 +110,8 @@ function isFilhoIdentity(user?: { email?: string | null; user_metadata?: any } |
 }
 
 export default function App() {
+  // Prioridade máxima: lê âncora de tenant no topo do ciclo de render, antes de effects.
+  const earlyTenantAnchor = readTenantAnchorFromStorage();
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -115,6 +141,7 @@ export default function App() {
   /** Evita recoverTenantAfterFailure em loop quando userRole não hidrata. */
   const roleRecoveryOnceForUserRef = useRef<string | null>(null);
   const [showConnectionResetCta, setShowConnectionResetCta] = useState(false);
+  const [tenantAnchorId, setTenantAnchorId] = useState<string | null>(earlyTenantAnchor);
   const lastAuthUserIdRef = useRef<string | null>(null);
 
   const isFilhoForPush = userRole === 'filho';
@@ -134,6 +161,11 @@ export default function App() {
     [session?.user, userRole]
   );
 
+  const effectiveTenantId = useMemo(
+    () => String(tenantData?.tenant_id || tenantAnchorId || '').trim() || null,
+    [tenantData?.tenant_id, tenantAnchorId]
+  );
+
   const blockingSpinnerActive = useMemo(() => {
     if (isInitializing || loading) return true;
     if (!session?.user) return false;
@@ -142,7 +174,7 @@ export default function App() {
       isSessionHydrating ||
       !userRole ||
       pendingFilhoHydration ||
-      (!!userRole && !tenantData?.tenant_id)
+      (!!userRole && !effectiveTenantId)
     );
   }, [
     isInitializing,
@@ -152,8 +184,37 @@ export default function App() {
     isSessionHydrating,
     userRole,
     pendingFilhoHydration,
-    tenantData?.tenant_id,
+    effectiveTenantId,
   ]);
+
+  useEffect(() => {
+    const liveTenant = String(tenantData?.tenant_id || '').trim();
+    if (liveTenant) {
+      writeTenantAnchorToStorage(liveTenant);
+      setTenantAnchorId(liveTenant);
+      return;
+    }
+    if (!session?.user) {
+      writeTenantAnchorToStorage(null);
+      setTenantAnchorId(null);
+    }
+  }, [tenantData?.tenant_id, session?.user?.id]);
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    if (tenantData?.tenant_id) return;
+    if (!tenantAnchorId) return;
+    setTenantData((prev) =>
+      prev
+        ? { ...prev, tenant_id: tenantAnchorId }
+        : {
+            nome: '',
+            plan: 'axe',
+            tenant_id: tenantAnchorId,
+            role: userRole ?? undefined,
+          }
+    );
+  }, [session?.user?.id, tenantData?.tenant_id, tenantAnchorId, userRole]);
 
   useEffect(() => {
     if (!blockingSpinnerActive) {
@@ -165,6 +226,20 @@ export default function App() {
       window.clearTimeout(id);
     };
   }, [blockingSpinnerActive]);
+
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      try {
+        if (sessionStorage.getItem('axecloud_critical_txn') !== '1') return;
+      } catch {
+        return;
+      }
+      event.preventDefault();
+      event.returnValue = 'Uma transação importante está em andamento.';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
 
   /** Login vive na raiz "/"; "/login" só espelha a SPA — normaliza a URL sem recarregar. */
   useLayoutEffect(() => {
@@ -571,6 +646,8 @@ export default function App() {
           setIsAdminGlobal(false);
           setSubscriptionActive(true);
           setTenantData(null);
+          writeTenantAnchorToStorage(null);
+          setTenantAnchorId(null);
           setSelectedChildId(null);
           setFilhoFotoUrl(null);
           setTenantRecoveryFailed(false);
@@ -630,19 +707,34 @@ export default function App() {
 
   useEffect(() => {
     if (!session?.user?.id) return;
-    if (tenantData?.tenant_id) return;
+    if (effectiveTenantId) return;
     const timer = window.setTimeout(async () => {
       const {
         data: { session: freshSession },
       } = await supabase.auth.getSession();
       if (!freshSession?.user) return;
-      if (tenantData?.tenant_id) return;
+      if (effectiveTenantId) return;
+      const storageAnchor = readTenantAnchorFromStorage();
+      if (storageAnchor) {
+        setTenantAnchorId(storageAnchor);
+        setTenantData((prev) =>
+          prev
+            ? { ...prev, tenant_id: storageAnchor }
+            : {
+                nome: '',
+                plan: 'axe',
+                tenant_id: storageAnchor,
+                role: userRole ?? undefined,
+              }
+        );
+        return;
+      }
       console.warn('[SESSION] tenant_id ausente após 3s — corta-circuito (logout sem redirect).');
       persistFilhoFlag(false);
       await emergencyAuthCircuitBreaker();
     }, 3000);
     return () => window.clearTimeout(timer);
-  }, [session?.user?.id, tenantData?.tenant_id]);
+  }, [session?.user?.id, effectiveTenantId, userRole]);
 
   /** Se o tenant não veio do tenant-info/props, tenta perfil_lider / filhos (JWT) e atualiza o estado. */
   useEffect(() => {
@@ -751,7 +843,7 @@ export default function App() {
   };
 
   const connectionEmergencyCta =
-    showConnectionResetCta && blockingSpinnerActive ? (
+    showConnectionResetCta && blockingSpinnerActive && !tenantAnchorId ? (
       <button
         type="button"
         onClick={() => void performEmergencyClientReset()}
@@ -851,7 +943,7 @@ export default function App() {
     );
   }
 
-  if (!tenantData?.tenant_id) {
+  if (!effectiveTenantId) {
     if (tenantRecoveryFailed) {
       return (
         <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 relative overflow-hidden">
