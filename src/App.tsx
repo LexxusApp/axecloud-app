@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 
 import Sidebar from './components/Sidebar';
 import Dashboard from './views/Dashboard';
@@ -28,7 +28,7 @@ import { hasPlanAccess, isLifetimePlan } from './constants/plans';
 import Paywall from './components/Paywall';
 import Subscription from './views/Subscription';
 import { useWebPush } from './hooks/useWebPush';
-import { APP_VERSION } from './config/version';
+import { SYSTEM_VERSION } from './config/version';
 import {
   clearCachedTenantIdForUser,
   peekCachedTenantId,
@@ -37,10 +37,13 @@ import {
 } from './lib/tenantCache';
 import { resolveTenantFromSupabase } from './lib/resolveTenantFromSupabase';
 import { PwaInstallTopbarButton } from './components/PwaInstallTopbarButton';
-import { performFastLogout, performVersionBumpLogout } from './lib/logout';
+import {
+  performFastLogout,
+  performVersionBumpLogout,
+  emergencyAuthCircuitBreaker,
+  performEmergencyClientReset,
+} from './lib/logout';
 import { performEmergencyHardReload } from './lib/emergencyReload';
-
-const SYSTEM_VERSION = `${APP_VERSION}-sessionfix3`; // force logout on update
 
 const FILHO_ALLOWED_TABS = new Set(['profile', 'perfil', 'financial', 'calendar', 'library', 'store', 'mural']);
 const FILHO_FLAG_KEY = 'axecloud_is_filho';
@@ -109,6 +112,9 @@ export default function App() {
   /** Falha ao recuperar tenant após API + fallback (evita shell “zumbi”). */
   const [tenantRecoveryFailed, setTenantRecoveryFailed] = useState(false);
   const [isSessionHydrating, setIsSessionHydrating] = useState(false);
+  /** Evita recoverTenantAfterFailure em loop quando userRole não hidrata. */
+  const roleRecoveryOnceForUserRef = useRef<string | null>(null);
+  const [showConnectionResetCta, setShowConnectionResetCta] = useState(false);
   const lastAuthUserIdRef = useRef<string | null>(null);
 
   const isFilhoForPush = userRole === 'filho';
@@ -122,6 +128,43 @@ export default function App() {
   const authFirstEventHandledRef = useRef(false);
   const loadingRef = useRef(loading);
   loadingRef.current = loading;
+
+  const pendingFilhoHydration = useMemo(
+    () => !!session?.user && readPersistedFilhoFlag(session.user.id) && userRole !== 'filho',
+    [session?.user, userRole]
+  );
+
+  const blockingSpinnerActive = useMemo(() => {
+    if (isInitializing || loading) return true;
+    if (!session?.user) return false;
+    if (tenantRecoveryFailed) return false;
+    return (
+      isSessionHydrating ||
+      !userRole ||
+      pendingFilhoHydration ||
+      (!!userRole && !tenantData?.tenant_id)
+    );
+  }, [
+    isInitializing,
+    loading,
+    session?.user,
+    tenantRecoveryFailed,
+    isSessionHydrating,
+    userRole,
+    pendingFilhoHydration,
+    tenantData?.tenant_id,
+  ]);
+
+  useEffect(() => {
+    if (!blockingSpinnerActive) {
+      setShowConnectionResetCta(false);
+      return;
+    }
+    const id = window.setTimeout(() => setShowConnectionResetCta(true), 8000);
+    return () => {
+      window.clearTimeout(id);
+    };
+  }, [blockingSpinnerActive]);
 
   /** Login vive na raiz "/"; "/login" só espelha a SPA — normaliza a URL sem recarregar. */
   useLayoutEffect(() => {
@@ -491,6 +534,7 @@ export default function App() {
           if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
             // Garante que qualquer papel residual de sessão anterior não vaze para a UI
             // enquanto os dados do novo usuário ainda estão sendo carregados.
+            roleRecoveryOnceForUserRef.current = null;
             setUserRole(null);
             setLoading(true);
             setIsSessionHydrating(true);
@@ -522,6 +566,7 @@ export default function App() {
           const uidOut = lastAuthUserIdRef.current;
           if (uidOut) clearCachedTenantIdForUser(uidOut);
           lastAuthUserIdRef.current = null;
+          roleRecoveryOnceForUserRef.current = null;
           setUserRole(null);
           setIsAdminGlobal(false);
           setSubscriptionActive(true);
@@ -571,16 +616,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!loading && session?.user && !userRole) {
-      void recoverTenantAfterFailure(
-        session.user.id,
-        session.user.email,
-        session.user.user_metadata?.role
-      ).then((ok) => {
-        if (!ok) setTenantRecoveryFailed(true);
-      });
-    }
-  }, [loading, session, userRole]);
+    if (loading || !session?.user || userRole) return;
+    if (roleRecoveryOnceForUserRef.current === session.user.id) return;
+    roleRecoveryOnceForUserRef.current = session.user.id;
+    void recoverTenantAfterFailure(
+      session.user.id,
+      session.user.email,
+      session.user.user_metadata?.role
+    ).then((ok) => {
+      if (!ok) setTenantRecoveryFailed(true);
+    });
+  }, [loading, session?.user?.id, userRole]);
 
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -591,15 +637,9 @@ export default function App() {
       } = await supabase.auth.getSession();
       if (!freshSession?.user) return;
       if (tenantData?.tenant_id) return;
-      console.warn('[SESSION] tenant_id ausente após 3s — limpando sessão e redirecionando para login.');
-      try {
-        sessionStorage.clear();
-      } catch {
-        // no-op
-      }
+      console.warn('[SESSION] tenant_id ausente após 3s — corta-circuito (logout sem redirect).');
       persistFilhoFlag(false);
-      await supabase.auth.signOut({ scope: 'local' });
-      window.location.replace('/login');
+      await emergencyAuthCircuitBreaker();
     }, 3000);
     return () => window.clearTimeout(timer);
   }, [session?.user?.id, tenantData?.tenant_id]);
@@ -639,7 +679,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [session?.user?.id, session?.user?.email, tenantData, tenantData?.tenant_id]);
+  }, [session?.user?.id, session?.user?.email, tenantData?.tenant_id]);
 
   useEffect(() => {
     const handleNavigateToSubscription = () => {
@@ -710,9 +750,20 @@ export default function App() {
     }
   };
 
+  const connectionEmergencyCta =
+    showConnectionResetCta && blockingSpinnerActive ? (
+      <button
+        type="button"
+        onClick={() => void performEmergencyClientReset()}
+        className="relative z-20 mt-10 w-[min(96vw,28rem)] px-6 py-5 rounded-2xl bg-red-600 text-white text-sm sm:text-base font-black uppercase tracking-wide text-center shadow-xl border border-red-400/40 active:scale-[0.98] transition-transform"
+      >
+        ERRO DE CONEXÃO: CLIQUE AQUI PARA RESETAR
+      </button>
+    ) : null;
+
   if (isInitializing || loading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center relative overflow-hidden">
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center relative overflow-hidden px-4">
         <div 
           className="fixed inset-0 bg-cover bg-center bg-no-repeat pointer-events-none"
           style={{ 
@@ -721,6 +772,7 @@ export default function App() {
           }}
         />
         <Loader2 className="w-12 h-12 text-primary animate-spin relative z-10" />
+        {connectionEmergencyCta}
       </div>
     );
   }
@@ -783,10 +835,9 @@ export default function App() {
     return <SubscriptionLock plan={tenantData?.plan} />;
   }
 
-  const pendingFilhoHydration = !!session?.user && readPersistedFilhoFlag(session.user.id) && userRole !== 'filho';
   if (loading || isSessionHydrating || !userRole || pendingFilhoHydration) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center relative overflow-hidden">
+      <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center relative overflow-hidden px-4">
         <div 
           className="fixed inset-0 bg-cover bg-center bg-no-repeat pointer-events-none"
           style={{ 
@@ -795,6 +846,7 @@ export default function App() {
           }}
         />
         <Loader2 className="w-12 h-12 text-primary animate-spin relative z-10" />
+        {connectionEmergencyCta}
       </div>
     );
   }
@@ -845,7 +897,7 @@ export default function App() {
       );
     }
     return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center relative overflow-hidden">
+      <div className="min-h-screen bg-[#0a0a0a] flex flex-col items-center justify-center relative overflow-hidden px-4">
         <div 
           className="fixed inset-0 bg-cover bg-center bg-no-repeat pointer-events-none"
           style={{ 
@@ -854,6 +906,7 @@ export default function App() {
           }}
         />
         <Loader2 className="w-12 h-12 text-primary animate-spin relative z-10" />
+        {connectionEmergencyCta}
       </div>
     );
   }

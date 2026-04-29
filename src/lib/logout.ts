@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { APP_VERSION } from '../config/version';
+import { APP_VERSION, SYSTEM_VERSION } from '../config/version';
 
 /**
  * Remove todos os caches do Cache Storage (PWA / Workbox).
@@ -47,7 +47,7 @@ export async function performFastLogout(): Promise<void> {
     window.localStorage.clear();
     window.sessionStorage.clear();
     try {
-      localStorage.setItem('axecloud_version', APP_VERSION);
+      localStorage.setItem('axecloud_version', SYSTEM_VERSION);
     } catch {
       /* ignorar */
     }
@@ -90,4 +90,37 @@ export async function performVersionBumpLogout(systemVersion: string): Promise<v
     }
     window.location.assign('/?updated=true');
   }
+}
+
+/**
+ * Corta-circuito: sessão inconsistente / tenant ausente — sem redirecionamento (evita loop PWA).
+ * Limpa storages + caches e encerra sessão local do Supabase.
+ */
+export async function emergencyAuthCircuitBreaker(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch {
+    /* ignorar */
+  }
+  try {
+    await deleteAllCacheStorage();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    try {
+      localStorage.setItem('axecloud_version', SYSTEM_VERSION);
+    } catch {
+      /* ignorar */
+    }
+  } catch {
+    /* ignorar */
+  }
+}
+
+/**
+ * Reset manual (botão de emergência): mesmo reset + recarga na raiz.
+ */
+export async function performEmergencyClientReset(): Promise<void> {
+  await emergencyAuthCircuitBreaker();
+  window.location.href = '/';
 }

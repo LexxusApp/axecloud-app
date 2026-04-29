@@ -47,12 +47,6 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    hardReloadForSwUpdate();
-  });
-}
-
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <PwaInstallProvider>

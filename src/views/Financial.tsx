@@ -128,7 +128,12 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
       if (!response.ok) throw new Error('Failed to fetch transactions');
       return response.json() as Promise<{ data?: any[] }>;
     },
-    { revalidateOnMount: true, revalidateOnFocus: true, dedupingInterval: 0 }
+    {
+      revalidateOnMount: true,
+      revalidateOnFocus: true,
+      dedupingInterval: 0,
+      errorRetryCount: 1,
+    }
   );
 
   useEffect(() => {

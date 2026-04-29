@@ -262,7 +262,12 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
   const { data: dashboardBundle, isLoading, mutate } = useSWR(
     dashboardSwrKey,
     () => fetchDashboardFinanceBundle(user!, tenantId, userRole, tenantData?.tenant_id),
-    { revalidateOnMount: true, revalidateOnFocus: true, dedupingInterval: 0 }
+    {
+      revalidateOnMount: true,
+      revalidateOnFocus: true,
+      dedupingInterval: 0,
+      errorRetryCount: 1,
+    }
   );
 
   useEffect(() => {

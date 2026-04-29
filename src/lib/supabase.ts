@@ -127,19 +127,30 @@ function createResilientFetch(getClient: () => SupabaseClient): typeof fetch {
   };
 }
 
-export const supabase = createClient(
-  supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder-key',
-  {
-    auth: {
-      autoRefreshToken: true,
-      persistSession: true,
-      detectSessionInUrl: true,
-      storageKey: 'axecloud-auth-token',
-      storage: typeof window !== 'undefined' ? window.localStorage : undefined,
-    },
-    global: {
-      fetch: createResilientFetch(() => supabase),
-    },
-  },
-);
+const globalForSupabase = globalThis as unknown as { __AXECLOUD_SUPABASE__?: SupabaseClient };
+
+function createAxecloudSupabaseClient(): SupabaseClient {
+  return createClient(
+    supabaseUrl || 'https://placeholder.supabase.co',
+    supabaseAnonKey || 'placeholder-key',
+    {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true,
+        storageKey: 'axecloud-auth-token',
+        storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+      },
+      global: {
+        fetch: createResilientFetch(() => supabase),
+      },
+    }
+  );
+}
+
+export const supabase: SupabaseClient =
+  globalForSupabase.__AXECLOUD_SUPABASE__ ?? createAxecloudSupabaseClient();
+
+if (typeof globalThis !== 'undefined') {
+  globalForSupabase.__AXECLOUD_SUPABASE__ = supabase;
+}
