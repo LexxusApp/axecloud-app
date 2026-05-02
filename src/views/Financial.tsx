@@ -41,7 +41,7 @@ function mensalidadeStatusIsPending(status: string | null) {
 }
 function mensalidadeStatusIsPaid(status: string | null) {
   const t = String(status ?? '').toLowerCase();
-  return t === 'pago' || t === 'paid';
+  return t === 'pago' || t === 'paid' || t === 'confirmado';
 }
 
 /** Legado sem coluna `status`: vínculo do filho em `... (ID:uuid)` na descrição (igual ao servidor). */
@@ -117,8 +117,8 @@ function mensalidadeRowIsPendenteForTabs(row: MensalidadeZeladorRow): boolean {
   if (mensalidadeStatusIsPaid(row.status)) return false;
   if (mensalidadeStatusIsPending(row.status)) return true;
   const st = String(row.status ?? '').trim().toLowerCase();
-  if (st === 'confirmado') return false;
   if (st !== '') return false;
+  // status vazio: descrição "(vencimento" manda — não tratar `tipo entrada` como pago (igual ao servidor).
   return rowIsMensalidadePendenteLegacy(row);
 }
 
@@ -127,7 +127,6 @@ function mensalidadeRowIsPagaForTabs(row: MensalidadeZeladorRow): boolean {
   if (mensalidadeStatusIsPending(row.status)) return false;
   if (mensalidadeStatusIsPaid(row.status)) return true;
   const st = String(row.status ?? '').trim().toLowerCase();
-  if (st === 'confirmado') return true;
   if (st !== '') return false;
   return rowIsMensalidadePagaLegacy(row);
 }

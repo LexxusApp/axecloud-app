@@ -446,16 +446,23 @@ async function hasPendingMensalidadeForDueMonth(
     ? "id, data, data_vencimento, descricao, categoria, filho_id"
     : "id, data, data_vencimento, descricao, categoria";
   if (supportsStatus) selectCols += ",status";
-  let q = supabaseAdmin.from("financeiro").select(selectCols).eq("categoria", "Mensalidade");
-  if (supportsFilhoId) q = q.eq("filho_id", filhoId);
-  else q = q.ilike("descricao", `%ID:${filhoId}%`);
-  const { data, error } = await q;
+  const baseQuery = () => {
+    let q = supabaseAdmin.from("financeiro").select(selectCols).eq("categoria", "Mensalidade");
+    if (supportsFilhoId) q = q.eq("filho_id", filhoId);
+    else q = q.ilike("descricao", `%ID:${filhoId}%`);
+    return q;
+  };
+  let { data, error } = await baseQuery();
+  if (error && String(error?.message || "").toLowerCase().includes("data_vencimento")) {
+    selectCols = selectCols.replace("data_vencimento, ", "").replace(",data_vencimento", "");
+    ({ data, error } = await baseQuery());
+  }
   if (error) {
     console.warn(
-      "[SERVER] hasPendingMensalidadeForDueMonth: erro na query — não inserir sync; tratar como já existente:",
+      "[SERVER] hasPendingMensalidadeForDueMonth: erro na query — seguir sync (assumir sem pendência detectável):",
       error?.message || error
     );
-    return true;
+    return false;
   }
   const fidNorm = String(filhoId || "").trim().toLowerCase();
   for (const r of data || []) {
@@ -569,7 +576,15 @@ async function syncMensalidadesPendentes(
   const { data: children, error: chErr } = await supabaseAdmin
     .from("filhos_de_santo")
     .select("id, nome, tenant_id, lider_id, created_at, data_entrada, status")
-    .or(`tenant_id.eq.${tenantId},tenant_id.eq.${resolvedTenant}`);
+    .or(
+      [
+        `tenant_id.eq.${tenantId}`,
+        `tenant_id.eq.${resolvedTenant}`,
+        `lider_id.eq.${tenantId}`,
+        `lider_id.eq.${resolvedTenant}`,
+        `lider_id.eq.${userId}`,
+      ].join(",")
+    );
   if (chErr) throw chErr;
   const rows = (children || []).filter((c: any) => {
     const same =
@@ -597,7 +612,8 @@ async function syncMensalidadesPendentes(
     const stFilho = String((child as any).status || "Ativo")
       .trim()
       .toLowerCase();
-    if (stFilho && stFilho !== "ativo") continue;
+    // Só ignora filhos explicitamente inativos; qualquer outro status continua elegível.
+    if (stFilho === "inativo" || stFilho === "desligado" || stFilho === "falecido") continue;
 
     const fid = child.id as string;
     if (!childEligibleForDueMonth(child, dueStr)) continue;
@@ -636,6 +652,11 @@ async function syncMensalidadesPendentes(
       delete insert.filho_id;
       const r3 = await supabaseAdmin.from("financeiro").insert([insert]);
       insErr = r3.error;
+    }
+    if (insErr && String(insErr.message || "").toLowerCase().includes("status")) {
+      delete insert.status;
+      const r4 = await supabaseAdmin.from("financeiro").insert([insert]);
+      insErr = r4.error;
     }
     if (!insErr) created += 1;
   }
@@ -1738,6 +1759,7 @@ async function startServer() {
       const ok = await assertZeladorTenantAccess(supabaseAdmin, resolveLeaderId, user.id, tenant_id);
       if (!ok) return res.status(403).json({ error: "Sem permissão" });
       const { created } = await syncMensalidadesPendentes(supabaseAdmin, resolveLeaderId, user.id, tenant_id);
+      console.info("[SERVER] mensalidades/sync-pendentes: created =", created, "tenant =", tenant_id);
       res.json({ success: true, created });
     } catch (err: any) {
       console.error("[SERVER] mensalidades/sync-pendentes:", err?.message || err);
