@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { MODAL_DLG_DONE, MODAL_DLG_IN, MODAL_DLG_OUT, MODAL_TW } from '../lib/modalMotion';
 import { X, Copy, CheckCircle2, Loader2, CalendarDays } from 'lucide-react';
 import { cn } from '../lib/utils';
 import QRCode from 'qrcode';
@@ -107,13 +108,13 @@ export default function PixPaymentModal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            className="absolute inset-0 bg-black/[0.9] backdrop-blur-none"
           />
           <motion.div
-            initial={{ opacity: 0, scale: 0.92, y: 24 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.92, y: 24 }}
-            transition={{ type: 'spring', damping: 26, stiffness: 300 }}
+            initial={MODAL_DLG_IN}
+            animate={MODAL_DLG_DONE}
+            exit={MODAL_DLG_OUT}
+            transition={MODAL_TW}
             className="relative z-10 w-full max-w-sm bg-[#111] border border-white/10 rounded-3xl p-6 space-y-5 shadow-2xl"
           >
             {/* Header */}

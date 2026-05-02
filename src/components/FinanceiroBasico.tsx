@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Plus, X, CheckCircle2, Loader2, MessageCircle, Download, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../lib/utils';
+import { MODAL_PANEL_DONE, MODAL_PANEL_IN, MODAL_PANEL_OUT, MODAL_TW } from '../lib/modalMotion';
 import { supabase } from '../lib/supabase';
 
 interface Transaction {
@@ -181,13 +182,13 @@ export default function FinanceiroBasico({ tenantId, userId }: FinanceiroBasicoP
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
-              className="absolute inset-0 bg-background/80 backdrop-blur-xl"
+              className="absolute inset-0 bg-background/[0.94] backdrop-blur-none"
             />
             <motion.div
-              initial={{ opacity: 0, y: 60 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 60 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              initial={MODAL_PANEL_IN}
+              animate={MODAL_PANEL_DONE}
+              exit={MODAL_PANEL_OUT}
+              transition={MODAL_TW}
               className="relative z-10 flex w-full flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-w-md"
             >
               <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-4 sm:px-6">
@@ -262,13 +263,13 @@ export default function FinanceiroBasico({ tenantId, userId }: FinanceiroBasicoP
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsUpgradeModalOpen(false)}
-              className="absolute inset-0 bg-black/90 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/[0.92] backdrop-blur-none"
             />
             <motion.div
-              initial={{ opacity: 0, y: 60 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 60 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              initial={MODAL_PANEL_IN}
+              animate={MODAL_PANEL_DONE}
+              exit={MODAL_PANEL_OUT}
+              transition={MODAL_TW}
               className="relative z-10 w-full space-y-5 rounded-3xl border border-primary/20 bg-[#1B1C1C] px-6 py-8 text-center sm:max-w-md sm:px-10"
             >
               <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto">

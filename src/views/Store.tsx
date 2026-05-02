@@ -649,10 +649,10 @@ export default function Store({ userRole, tenantData, userId, isAdminGlobal, set
       {/* Cart Sheet */}
       <Dialog.Root open={isCartOpen} onOpenChange={setIsCartOpen}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+          <Dialog.Overlay className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
           <Dialog.Content
             className={cn(
-              'fixed z-[101] flex w-full max-w-md flex-col overflow-hidden bg-[#121212]/90 p-6 shadow-2xl backdrop-blur-xl',
+              'fixed z-[101] flex w-full max-w-md flex-col overflow-hidden bg-[#121212]/98 p-6 shadow-2xl',
               'max-h-[min(92dvh,calc(100dvh-2rem))] rounded-3xl border border-white/10',
               'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 max-w-[min(28rem,calc(100vw-2rem))]',
               'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-300',
@@ -768,7 +768,7 @@ export default function Store({ userRole, tenantData, userId, isAdminGlobal, set
       {/* Add Product Dialog */}
       <Dialog.Root open={isAddProductOpen} onOpenChange={setIsAddProductOpen}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
+          <Dialog.Overlay className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
           <Dialog.Content className="fixed left-[50%] top-[50%] translate-x-[-50%] translate-y-[-50%] w-full max-w-lg bg-[#121212] rounded-3xl border border-white/10 z-[101] p-8 shadow-2xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-200">
             <div className="flex items-center justify-between mb-6">
               <Dialog.Title className="text-2xl font-black text-white">Novo Produto</Dialog.Title>

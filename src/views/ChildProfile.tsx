@@ -3,6 +3,7 @@ import { ArrowLeft, Calendar, User, Phone, MapPin, Activity, AlertTriangle, Edit
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../lib/utils';
 import { supabase } from '../lib/supabase';
+import { MODAL_PANEL_DONE, MODAL_PANEL_IN, MODAL_PANEL_OUT, MODAL_TW } from '../lib/modalMotion';
 import PageHeader from '../components/PageHeader';
 import { hasPlanAccess } from '../constants/plans';
 
@@ -850,13 +851,13 @@ export default function ChildProfile({ childId, setActiveTab, user, tenantData, 
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsEditModalOpen(false)}
-              className="absolute inset-0 bg-black/90 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/[0.92] backdrop-blur-none"
             />
             <motion.div 
-              initial={{ opacity: 0, y: 60 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 60 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              initial={MODAL_PANEL_IN}
+              animate={MODAL_PANEL_DONE}
+              exit={MODAL_PANEL_OUT}
+              transition={MODAL_TW}
               className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-3xl border border-[#FBBC00]/20 bg-[#1F1F1F] shadow-2xl sm:max-h-[90dvh] sm:max-w-2xl"
             >
               {/* Header */}
@@ -963,13 +964,13 @@ export default function ChildProfile({ childId, setActiveTab, user, tenantData, 
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsObligationModalOpen(false)}
-              className="absolute inset-0 bg-black/90 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/[0.92] backdrop-blur-none"
             />
             <motion.div 
-              initial={{ opacity: 0, y: 60 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 60 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              initial={MODAL_PANEL_IN}
+              animate={MODAL_PANEL_DONE}
+              exit={MODAL_PANEL_OUT}
+              transition={MODAL_TW}
               className="relative z-10 flex w-full max-h-[88dvh] flex-col overflow-hidden rounded-3xl border border-[#FBBC00]/20 bg-[#1F1F1F] shadow-2xl sm:max-h-[85dvh] sm:max-w-lg"
             >
               <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-4 sm:px-6">

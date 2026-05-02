@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../lib/supabase';
+import { MODAL_PANEL_DONE, MODAL_PANEL_IN, MODAL_PANEL_OUT, MODAL_TW } from '../lib/modalMotion';
 import { cn } from '../lib/utils';
 import { hasPlanAccess } from '../constants/plans';
 import CommentSection from '../components/CommentSection';
@@ -586,13 +587,13 @@ export default function Library({ user, userRole, tenantData, isAdminGlobal, set
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsUploadModalOpen(false)}
-              className="absolute inset-0 bg-black/95 backdrop-blur-md"
+              className="absolute inset-0 bg-black/[0.94] backdrop-blur-none"
             />
             <motion.div 
-              initial={{ opacity: 0, y: 60 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 60 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              initial={MODAL_PANEL_IN}
+              animate={MODAL_PANEL_DONE}
+              exit={MODAL_PANEL_OUT}
+              transition={MODAL_TW}
               className="relative z-10 flex w-full max-h-[88dvh] flex-col overflow-hidden rounded-3xl border border-white/10 bg-[#1F1F1F] shadow-2xl sm:max-w-lg"
             >
               <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-4 sm:px-6">

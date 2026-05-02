@@ -10,6 +10,7 @@ import BodyPortal from '../components/BodyPortal';
 import { SkeletonBlock, CalendarEventRowSkeleton } from '../components/Skeleton';
 import { readStaleCache, writeStaleCache } from '../lib/staleCache';
 import { hasPlanAccess, hasPremiumTierFeatures } from '../constants/plans';
+import { MODAL_PANEL_DONE, MODAL_PANEL_IN, MODAL_PANEL_OUT, MODAL_TW } from '../lib/modalMotion';
 
 interface Event {
   id: string;
@@ -734,7 +735,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
                         type="button"
                         key={event.id}
                         initial={{ opacity: 0, y: 12 }}
-                        animate={{ opacity: 1, y: 0 }}
+                        animate={MODAL_PANEL_DONE}
                         transition={{ delay: idx * 0.04 }}
                         onClick={() => setFilhoEventDetail(event)}
                         className={cn(
@@ -814,13 +815,13 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={() => setFilhoEventDetail(null)}
-                className="absolute inset-0 bg-background/80 backdrop-blur-xl"
+                className="absolute inset-0 bg-background/[0.94] backdrop-blur-none"
               />
               <motion.div
-                initial={{ opacity: 0, y: 60 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 60 }}
-                transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+                initial={MODAL_PANEL_IN}
+                animate={MODAL_PANEL_DONE}
+                exit={MODAL_PANEL_OUT}
+                transition={MODAL_TW}
                 className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-w-lg"
               >
                 <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-4 sm:px-6">
@@ -1221,13 +1222,13 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
-              className="absolute inset-0 bg-background/80 backdrop-blur-xl"
+              className="absolute inset-0 bg-background/[0.94] backdrop-blur-none"
             />
             <motion.div
-              initial={{ opacity: 0, y: 60 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 60 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              initial={MODAL_PANEL_IN}
+              animate={MODAL_PANEL_DONE}
+              exit={MODAL_PANEL_OUT}
+              transition={MODAL_TW}
               className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-w-lg"
             >
               <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-4 sm:px-6">
@@ -1370,13 +1371,13 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setSelectedEventForGuests(null)}
-              className="absolute inset-0 bg-background/80 backdrop-blur-xl"
+              className="absolute inset-0 bg-background/[0.94] backdrop-blur-none"
             />
             <motion.div
-              initial={{ opacity: 0, y: 60 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 60 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              initial={MODAL_PANEL_IN}
+              animate={MODAL_PANEL_DONE}
+              exit={MODAL_PANEL_OUT}
+              transition={MODAL_TW}
               className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-w-2xl"
             >
               <div className="flex shrink-0 flex-col gap-4 border-b border-white/5 px-5 py-4 sm:gap-6 sm:px-6">
@@ -1663,13 +1664,13 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => !isDeleting && setItemToDelete(null)}
-              className="absolute inset-0 bg-background/80 backdrop-blur-xl"
+              className="absolute inset-0 bg-background/[0.94] backdrop-blur-none"
             />
             <motion.div
-              initial={{ opacity: 0, y: 60 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 60 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              initial={MODAL_PANEL_IN}
+              animate={MODAL_PANEL_DONE}
+              exit={MODAL_PANEL_OUT}
+              transition={MODAL_TW}
               className="relative z-10 w-full space-y-5 rounded-3xl border border-white/10 bg-card px-6 py-8 text-center shadow-2xl sm:max-w-md"
             >
               <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-500/10">

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
+import { MODAL_DLG_DONE, MODAL_DLG_IN, MODAL_DLG_OUT, MODAL_TW } from '../lib/modalMotion';
 import LuxuryLoading from '../components/LuxuryLoading';
 import PageHeader from '../components/PageHeader';
 import { Session } from '@supabase/supabase-js';
@@ -667,12 +668,14 @@ export default function Admin({ session: propSession, tenantData, setActiveTab }
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            className="absolute inset-0 bg-black/[0.9] backdrop-blur-none"
             onClick={() => !saving && setIsDeleteModalOpen(false)}
           />
           <motion.div
-            initial={{ opacity: 0, scale: 0.9, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
+            initial={MODAL_DLG_IN}
+            animate={MODAL_DLG_DONE}
+            exit={MODAL_DLG_OUT}
+            transition={MODAL_TW}
             className="relative w-full max-w-md bg-card border border-white/5 p-12 rounded-[40px] text-center space-y-8"
           >
             <div className="w-20 h-20 bg-red-500/10 rounded-3xl flex items-center justify-center mx-auto">
@@ -712,11 +715,13 @@ export default function Admin({ session: propSession, tenantData, setActiveTab }
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             onClick={() => !registering && setIsRegisterModalOpen(false)}
-            className="absolute inset-0 bg-background/80 backdrop-blur-xl"
+            className="absolute inset-0 bg-background/[0.94] backdrop-blur-none"
           />
           <motion.div
-            initial={{ opacity: 0, scale: 0.9, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
+            initial={MODAL_DLG_IN}
+            animate={MODAL_DLG_DONE}
+            exit={MODAL_DLG_OUT}
+            transition={MODAL_TW}
             className="bg-card border border-[#FBBC00]/30 w-full max-w-2xl rounded-[2.5rem] shadow-2xl relative z-10 overflow-hidden"
           >
             {!successData ? (

@@ -55,6 +55,7 @@ import {
 } from 'recharts';
 import { supabase } from '../lib/supabase';
 import { cn } from '../lib/utils';
+import { MODAL_DLG_DONE, MODAL_DLG_IN, MODAL_DLG_OUT, MODAL_TW } from '../lib/modalMotion';
 import { Session } from '@supabase/supabase-js';
 import LuxuryLoading from '../components/LuxuryLoading';
 
@@ -787,9 +788,12 @@ export default function MasterPortal({ session, onLogout, onSwitchToNormal }: Ma
       <AnimatePresence>
         {isRegisterModalOpen && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
-             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsRegisterModalOpen(false)} className="absolute inset-0 bg-black/95 backdrop-blur-sm" />
+             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsRegisterModalOpen(false)} className="absolute inset-0 bg-black/[0.94] backdrop-blur-none" />
              <motion.div 
-               initial={{ opacity: 0, scale: 0.98, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 10 }}
+               initial={MODAL_DLG_IN}
+               animate={MODAL_DLG_DONE}
+               exit={MODAL_DLG_OUT}
+               transition={MODAL_TW}
                className="relative w-full max-w-2xl bg-[#222327] rounded-3xl border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.8)] overflow-hidden"
              >
                 <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
@@ -870,9 +874,12 @@ export default function MasterPortal({ session, onLogout, onSwitchToNormal }: Ma
       <AnimatePresence>
         {isDeleteModalOpen && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/98 backdrop-blur-md" />
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/[0.96] backdrop-blur-none" />
             <motion.div 
-              initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}
+              initial={MODAL_DLG_IN}
+              animate={MODAL_DLG_DONE}
+              exit={MODAL_DLG_OUT}
+              transition={MODAL_TW}
               className="relative bg-zinc-900 border border-red-500/30 p-10 rounded-2xl w-full max-w-md text-center"
             >
                <div className="w-16 h-16 mx-auto bg-red-500/10 rounded-full flex items-center justify-center text-red-500 mb-6">

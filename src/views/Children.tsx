@@ -3,6 +3,7 @@ import { Search, Filter, Plus, MoreVertical, User, Calendar, MapPin, Phone, Load
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../lib/utils';
 import { supabase } from '../lib/supabase';
+import { MODAL_PANEL_DONE, MODAL_PANEL_IN, MODAL_PANEL_OUT, MODAL_TW } from '../lib/modalMotion';
 import LuxuryLoading from '../components/LuxuryLoading';
 import PageHeader from '../components/PageHeader';
 import { PLAN_LIMITS, PLAN_NAMES, canonicalPlanSlug } from '../constants/plans';
@@ -360,13 +361,13 @@ export default function Children({ setActiveTab, user, tenantData, setSelectedCh
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
-              className="absolute inset-0 bg-background/80 backdrop-blur-sm"
+              className="absolute inset-0 bg-background/[0.94] backdrop-blur-none"
             />
             <motion.div
-              initial={{ opacity: 0, y: 60 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 60 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              initial={MODAL_PANEL_IN}
+              animate={MODAL_PANEL_DONE}
+              exit={MODAL_PANEL_OUT}
+              transition={MODAL_TW}
               className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-h-[90dvh] sm:max-w-lg"
             >
               {/* Header */}

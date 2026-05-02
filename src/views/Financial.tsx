@@ -16,6 +16,7 @@ import {
   parseFinanceiroDataRef,
 } from '../lib/financeiroSaldo';
 import { resolveTenantIdForFinance } from '../lib/tenantCache';
+import { MODAL_DLG_DONE, MODAL_DLG_IN, MODAL_DLG_OUT, MODAL_PANEL_DONE, MODAL_PANEL_IN, MODAL_PANEL_OUT, MODAL_TW } from '../lib/modalMotion';
 
 type MensalidadeZeladorRow = {
   id: string;
@@ -1558,13 +1559,13 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsUpgradeModalOpen(false)}
-              className="absolute inset-0 bg-black/90 backdrop-blur-sm"
+              className="absolute inset-0 bg-black/[0.92] backdrop-blur-none"
             />
             <motion.div
-              initial={{ opacity: 0, y: 60 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 60 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              initial={MODAL_PANEL_IN}
+              animate={MODAL_PANEL_DONE}
+              exit={MODAL_PANEL_OUT}
+              transition={MODAL_TW}
               className="relative z-10 w-full space-y-5 rounded-3xl border border-primary/20 bg-[#1B1C1C] px-6 py-8 text-center sm:max-w-md sm:px-10"
             >
               <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
@@ -1607,12 +1608,13 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsMetaModalOpen(false)}
-              className="absolute inset-0 bg-background/80 backdrop-blur-xl"
+              className="absolute inset-0 bg-background/[0.94] backdrop-blur-none"
             />
             <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              initial={MODAL_DLG_IN}
+              animate={MODAL_DLG_DONE}
+              exit={MODAL_DLG_OUT}
+              transition={MODAL_TW}
               className="bg-card border border-white/10 w-full max-w-sm rounded-[2rem] shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh]"
             >
               <div className="p-5 sm:p-6 border-b border-white/5 flex items-center justify-between shrink-0">
@@ -1698,13 +1700,13 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
-              className="absolute inset-0 bg-background/80 backdrop-blur-xl"
+              className="absolute inset-0 bg-background/[0.94] backdrop-blur-none"
             />
             <motion.div
-              initial={{ opacity: 0, y: 60 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 60 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              initial={MODAL_PANEL_IN}
+              animate={MODAL_PANEL_DONE}
+              exit={MODAL_PANEL_OUT}
+              transition={MODAL_TW}
               className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-w-lg"
             >
               <div className="p-5 sm:p-6 border-b border-white/5 flex items-center justify-between shrink-0">
