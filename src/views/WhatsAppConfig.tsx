@@ -7,9 +7,18 @@ export default function WhatsAppConfig() {
   const [status, setStatus] = useState<'DISCONNECTED' | 'LOADING' | 'QRCODE' | 'CONNECTED'>('DISCONNECTED');
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [testPhone, setTestPhone] = useState('');
   const [sendingTest, setSendingTest] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
+  const getAccessToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) return session.access_token;
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    if (refreshed?.session?.access_token) return refreshed.session.access_token;
+    throw new Error('Sessão expirada. Faça login novamente.');
+  };
 
   // Polling para checar status
   useEffect(() => {
@@ -17,18 +26,28 @@ export default function WhatsAppConfig() {
 
     const checkStatus = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
+        const token = await getAccessToken();
 
         const res = await fetch('/api/whatsapp/status', {
-          headers: { 'Authorization': `Bearer ${session.access_token}` }
+          headers: { 'Authorization': `Bearer ${token}` },
+          cache: 'no-store',
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(String(data?.error || `Falha ao consultar status (${res.status})`));
         
-        setStatus(data.status);
-        setQrCode(data.qrcode);
+        const nextStatus = String(data?.status || '').toUpperCase();
+        if (nextStatus === 'CONNECTED' || nextStatus === 'QRCODE' || nextStatus === 'LOADING' || nextStatus === 'DISCONNECTED') {
+          setStatus(nextStatus as 'CONNECTED' | 'QRCODE' | 'LOADING' | 'DISCONNECTED');
+        } else {
+          setStatus('DISCONNECTED');
+        }
+        setQrCode(typeof data?.qrcode === 'string' ? data.qrcode : null);
+        setErrorMsg(null);
       } catch (err) {
         console.error('Erro ao checar status do WhatsApp:', err);
+        setStatus('DISCONNECTED');
+        setQrCode(null);
+        setErrorMsg(err instanceof Error ? err.message : 'Não foi possível consultar o status do WhatsApp.');
       }
     };
 
@@ -40,17 +59,21 @@ export default function WhatsAppConfig() {
 
   const handleStart = async () => {
     setLoading(true);
+    setErrorMsg(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      const token = await getAccessToken();
 
-      await fetch('/api/whatsapp/start', {
+      const res = await fetch('/api/whatsapp/start', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${session.access_token}` }
+        headers: { 'Authorization': `Bearer ${token}` }
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(String(data?.error || `Falha ao iniciar WhatsApp (${res.status})`));
       setStatus('LOADING');
     } catch (err) {
       console.error('Erro ao iniciar WhatsApp:', err);
+      setStatus('DISCONNECTED');
+      setErrorMsg(err instanceof Error ? err.message : 'Não foi possível iniciar a conexão do WhatsApp.');
     } finally {
       setLoading(false);
     }
@@ -60,18 +83,21 @@ export default function WhatsAppConfig() {
     if (!confirm('Deseja realmente desconectar o WhatsApp? Isso limpará sua sessão atual.')) return;
     
     setLoading(true);
+    setErrorMsg(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      const token = await getAccessToken();
 
-      await fetch('/api/whatsapp/logout', {
+      const res = await fetch('/api/whatsapp/logout', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${session.access_token}` }
+        headers: { 'Authorization': `Bearer ${token}` }
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(String(data?.error || `Falha ao deslogar WhatsApp (${res.status})`));
       setStatus('DISCONNECTED');
       setQrCode(null);
     } catch (err) {
       console.error('Erro ao deslogar WhatsApp:', err);
+      setErrorMsg(err instanceof Error ? err.message : 'Não foi possível desconectar o WhatsApp.');
     } finally {
       setLoading(false);
     }
@@ -82,26 +108,28 @@ export default function WhatsAppConfig() {
     
     setSendingTest(true);
     setTestStatus('idle');
+    setErrorMsg(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      const token = await getAccessToken();
 
       const response = await fetch('/api/whatsapp/test-message', {
         method: 'POST',
         headers: { 
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ phone: testPhone })
       });
 
-      if (!response.ok) throw new Error('Falha no envio');
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(String(data?.error || 'Falha no envio'));
       
       setTestStatus('success');
       setTestPhone('');
     } catch (err) {
       console.error('Erro ao enviar mensagem de teste:', err);
       setTestStatus('error');
+      setErrorMsg(err instanceof Error ? err.message : 'Erro ao enviar mensagem de teste.');
     } finally {
       setSendingTest(false);
       setTimeout(() => setTestStatus('idle'), 5000);
@@ -122,6 +150,11 @@ export default function WhatsAppConfig() {
 
       <div className="grid grid-cols-1 gap-6 text-left md:grid-cols-2 md:gap-8">
         <div className="space-y-6">
+          {errorMsg && (
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs font-semibold text-red-300">
+              {errorMsg}
+            </div>
+          )}
           <div className="space-y-4">
             <h3 className="flex items-center gap-2 text-xl font-bold text-white">
               <Shield className="w-5 h-5 text-emerald-500" />
