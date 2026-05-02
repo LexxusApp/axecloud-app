@@ -54,8 +54,8 @@ export function getIsSessionReady() {
   return isSessionReadyGlobal;
 }
 
-// Bump local a cada rodada com mudanças para forçar logout/reload de validação.
-const SYSTEM_VERSION = `${BASE_SYSTEM_VERSION}-rtm18`;
+// Versionamento centralizado em src/config/version.ts (formato numérico contínuo).
+const SYSTEM_VERSION = BASE_SYSTEM_VERSION;
 
 function readTenantAnchorFromStorage() {
   try {

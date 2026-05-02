@@ -1,4 +1,4 @@
-export const APP_VERSION = '2.0.15';
+export const APP_VERSION = '2.0.16';
 
-/** Bump a cada correção crítica — alinhado com logout forçado e cache PWA. */
-export const SYSTEM_VERSION = `${APP_VERSION}-sessionfix9`;
+/** Versionamento numérico contínuo para controle de sessão/cache. */
+export const SYSTEM_VERSION = `V${APP_VERSION}`;

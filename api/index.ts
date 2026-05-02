@@ -3070,9 +3070,174 @@ async function startServer() {
     }
   });
 
-  // --- WHATSAPP INTEGRATION ENDPOINTS ---
+  // --- Baileys WhatsApp Provider Implementation (Multi-Tenant) ---
+  
+  type WhatsAppSession = {
+    sock: any;
+    qr: string | null;
+    connectionStatus: 'DISCONNECTED' | 'CONNECTED' | 'QRCODE' | 'LOADING';
+  };
+  
+  const whatsappSessions: Map<string, WhatsAppSession> = new Map();
 
-  // 1. Get/Save WhatsApp Config
+  function getSession(tenantId: string): WhatsAppSession {
+    if (!whatsappSessions.has(tenantId)) {
+      whatsappSessions.set(tenantId, {
+        sock: null,
+        qr: null,
+        connectionStatus: 'DISCONNECTED'
+      });
+    }
+    return whatsappSessions.get(tenantId)!;
+  }
+
+  async function connectToWhatsApp(tenantId: string) {
+    try {
+      const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = await import('@whiskeysockets/baileys');
+      const { default: pino } = await import('pino');
+      const fs = await import('fs');
+      const path = await import('path');
+      const QRCode = await import('qrcode');
+
+      const session = getSession(tenantId);
+      if (session.connectionStatus === 'CONNECTED' || (session.connectionStatus === 'LOADING' && session.sock)) return;
+      
+      session.connectionStatus = 'LOADING';
+      const { version } = await fetchLatestBaileysVersion();
+      
+      const authPath = path.resolve(process.cwd(), 'auth_info', tenantId);
+      const { state, saveCreds } = await useMultiFileAuthState(authPath);
+
+      session.sock = makeWASocket({
+        version,
+        auth: state,
+        printQRInTerminal: false,
+        logger: pino({ level: 'silent' }) as any,
+        browser: ['AxéCloud', 'Chrome', '1.0.0']
+      });
+
+      session.sock.ev.on('connection.update', async (update: any) => {
+        const { connection, lastDisconnect, qr: newQr } = update;
+
+        if (newQr) {
+          session.qr = await QRCode.toDataURL(newQr);
+          session.connectionStatus = 'QRCODE';
+        }
+
+        if (connection === 'close') {
+          const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+          const errorMsg = lastDisconnect?.error?.message || '';
+          
+          const isConnectionFailure = statusCode === 401 && errorMsg.includes('Connection Failure');
+          const isLoggedOut = (statusCode === DisconnectReason.loggedOut || statusCode === 401) && !isConnectionFailure;
+          const isConflict = statusCode === DisconnectReason.connectionReplaced;
+          const shouldReconnect = !isLoggedOut && !isConflict;
+          
+          session.connectionStatus = 'DISCONNECTED';
+          session.qr = null;
+          
+          if (shouldReconnect) {
+            setTimeout(() => connectToWhatsApp(tenantId), 5000);
+          } else {
+            session.sock = null;
+            if (isLoggedOut || isConflict) {
+              if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true });
+            }
+          }
+        } else if (connection === 'open') {
+          session.connectionStatus = 'CONNECTED';
+          session.qr = null;
+        }
+      });
+
+      session.sock.ev.on('messages.upsert', async (m: any) => {
+        const msg = m.messages?.[0];
+        if (!msg?.message || msg.key?.fromMe) return;
+
+        const senderJid = msg.key?.remoteJid;
+        const textMessage = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
+        if (!textMessage || !senderJid) return;
+
+        const cleanText = String(textMessage).trim().toUpperCase();
+        const isConfirmation = cleanText.startsWith('SIM') || cleanText.startsWith('NAO') || cleanText.startsWith('NÃO');
+        if (!isConfirmation) return;
+
+        const match = cleanText.match(/^(SIM|NAO|NÃO)(?:\s+(\d{8,11}))?\s*$/i);
+        if (!match) return;
+
+        const action = match[1].toUpperCase();
+        const extractedPhoneFromText = match[2];
+        const isLid = senderJid.includes('@lid');
+        const defaultSenderPhone = senderJid.replace(/[^0-9]/g, '');
+        const newStatus = action === 'SIM' ? 'Confirmado' : 'Recusado';
+
+        try {
+          const searchPhone = extractedPhoneFromText || defaultSenderPhone;
+          const last8 = searchPhone.slice(-8);
+          
+          const { data: convites, error: queryError } = await supabaseAdmin
+            .from('convidados_eventos')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .ilike('telefone', `%${last8}`);
+           
+          if (queryError) return;
+
+          if (convites && convites.length > 0) {
+            const convitesPendentes = convites.filter((c: any) => c.status !== newStatus);
+            for (const convite of convitesPendentes) {
+              await supabaseAdmin.from('convidados_eventos').update({ status: newStatus }).eq('id', convite.id);
+            }
+
+            if (convitesPendentes.length > 0) {
+              const confirmMsg = action === 'SIM' 
+                ? "Axé! Sua presença foi confirmada com sucesso. Aguardamos você!"
+                : "Agradecemos o aviso! Sua ausência foi registrada. Pai/Mãe Oxalá abençoe!";
+              await enviarMensagem(tenantId, senderJid, confirmMsg);
+            } else {
+              await enviarMensagem(tenantId, senderJid, `Seu status já constava como ${newStatus} em nosso sistema! Axé.`);
+            }
+          } else if (isLid && !extractedPhoneFromText) {
+            const fallbackMsg = "Axé! Recebemos sua mensagem, mas por questões de privacidade do WhatsApp Comercial, não conseguimos identificar seu número de telefone original automaticamente.\n\nPara confirmarmos sua presença no sistema, por favor reenvie sua resposta incluindo seu número com DDD.\n\n*Exemplo: SIM 11999999999*";
+            await enviarMensagem(tenantId, senderJid, fallbackMsg);
+          } else {
+            const errorMsg = "Não localizamos nenhum convite pendente para este número de telefone no sistema do Terreiro. Houve alguma alteração de número?";
+            await enviarMensagem(tenantId, senderJid, errorMsg);
+          }
+        } catch {
+          // sem throw para não derrubar o consumer do baileys
+        }
+      });
+
+      session.sock.ev.on('creds.update', saveCreds);
+
+    } catch (err) {
+      console.error(`[WP - ${tenantId}] Erro fatal na inicialização do Baileys:`, err);
+      const session = getSession(tenantId);
+      session.connectionStatus = 'DISCONNECTED';
+      session.sock = null;
+      session.qr = null;
+    }
+  }
+
+  const enviarMensagem = async (tenantId: string, numero: string, texto: string) => {
+    const session = getSession(tenantId);
+    if (!session.sock || session.connectionStatus !== 'CONNECTED') return false;
+    try {
+      let jid = numero;
+      if (!numero.includes('@')) {
+        let cleanNumber = numero.replace(/\D/g, '');
+        if (!cleanNumber.startsWith('55')) cleanNumber = `55${cleanNumber}`;
+        jid = `${cleanNumber}@s.whatsapp.net`;
+      }
+      await session.sock.sendMessage(jid, { text: texto });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // --- WHATSAPP INTEGRATION ENDPOINTS ---
   app.post("/api/whatsapp/config", async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
@@ -3095,12 +3260,10 @@ async function startServer() {
       if (error) throw error;
       res.json({ success: true });
     } catch (error: any) {
-      console.error("[WHATSAPP] Config Error:", error);
       res.status(500).json({ error: error.message });
     }
   });
 
-  // 2. Send WhatsApp Message (With Queue Simulation)
   app.post("/api/whatsapp/send", async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
@@ -3112,18 +3275,17 @@ async function startServer() {
 
       const { tipo, filhoId, variables, forcePhone } = req.body;
 
-      // Fetch Config
       const { data: config } = await supabaseAdmin
         .from('whatsapp_config')
         .select('*')
         .eq('tenant_id', user.id)
         .single();
 
-      if (!config || !config.is_connected || !config.api_url) {
-        return res.status(400).json({ error: "WhatsApp não configurado ou desconectado" });
+      const session = getSession(user.id);
+      if (session.connectionStatus !== 'CONNECTED') {
+        return res.status(400).json({ error: "WhatsApp não configurado ou desconectado no Servidor" });
       }
 
-      // Fetch Phone Number if not forced
       let phone = forcePhone;
       if (!phone && filhoId) {
         const { data: filho } = await supabaseAdmin
@@ -3133,46 +3295,42 @@ async function startServer() {
           .single();
         phone = filho?.whatsapp_phone;
       }
-
       if (!phone) return res.status(400).json({ error: "Telefone não encontrado" });
+      phone = String(phone).replace(/\D/g, '');
+      if (!phone.startsWith('55')) phone = `55${phone}`;
 
-      // Sanitize Phone (Remove non-digits)
-      phone = phone.replace(/\D/g, '');
-      if (!phone.startsWith('55')) phone = '55' + phone;
-
-      // Prepare Message from Template
-      let message = config.templates?.[tipo] || "Mensagem do AxéCloud";
-      
-      // Default template for cobranca_mensalidade if not set
-      if (tipo === 'cobranca_mensalidade' && !config.templates?.[tipo]) {
+      let message = config?.templates?.[tipo] || "Mensagem do AxéCloud";
+      if (tipo === 'cobranca_mensalidade' && !config?.templates?.[tipo]) {
         message = "Olá, {{nome_filho}}! Passando para lembrar da sua mensalidade de {{mes_ano}} no valor de R$ {{valor}} no {{nome_terreiro}}. Sua contribuição é fundamental para o nosso fundamento. Axé!";
       }
+      if (tipo === 'financeiro' && !config?.templates?.[tipo]) {
+        message = "Olá, {{nome_filho}}! Lembramos do pagamento de sua mensalidade no valor de R$ {{valor_mensalidade}}, com vencimento em {{data_vencimento}}, para o terreiro {{nome_terreiro}}. Axé!";
+      }
+      if (tipo === 'mural_aviso' && !config?.templates?.[tipo]) {
+        message = "Paz e Luz, {{nome_filho}}! Há um novo aviso no Mural do terreiro {{nome_terreiro}}:\n\n*{{titulo_aviso}}*\n\nAcesse o sistema para ver os detalhes. Axé!";
+      }
+      if (tipo === 'estoque_critico' && !config?.templates?.[tipo]) {
+        message = "⚠️ *ALERTA DE ESTOQUE* ⚠️\nOlá! O item *{{item_nome}}* atingiu o nível crítico no {{nome_terreiro}}.\nQuantidade atual: {{quantidade}}\nPor favor, providencie a reposição conforme necessário.";
+      }
+      if (tipo === 'convite_evento' && !config?.templates?.[tipo]) {
+        message = "Paz e Luz, {{nome_convidado}}!\nO terreiro {{nome_terreiro}} tem a honra de te convidar para o nosso próximo encontro:\n\n*{{nome_evento}}*\n📅 Data: {{data_evento}}\n⏰ Horário: {{hora_evento}}\n\n⏳ *Por favor, responda com SIM para confirmar sua presença, ou NÃO caso não possa comparecer.*\n\nAguardamos sua presença! Axé!";
+      }
+      if (tipo === 'boas_vindas' && !config?.templates?.[tipo]) {
+        message = "Seja muito bem-vindo(a), porta de entrada do Axé, {{nome_filho}}! 🙏\n\nÉ uma alegria imensa ter você fazendo parte da família {{nome_terreiro}}. Que sua caminhada seja de muita luz, aprendizado e evolução sob a proteção dos nossos Orixás e Guias.\n\nEste é o nosso canal oficial de comunicação. Por aqui você receberá avisos, calendários e informações importantes do terreiro.\n\nAxé! ✨";
+      }
 
-      Object.entries(variables).forEach(([key, value]) => {
-        message = message.replace(new RegExp(`{{${key}}}`, 'g'), value as string);
+      Object.entries(variables || {}).forEach(([key, value]) => {
+        message = message.replace(new RegExp(`{{${key}}}`, 'g'), String(value));
       });
 
-      // Privacy Check: Ensure no sensitive data is sent
-      // (This is a simplified check, in a real app we'd be more rigorous)
       if (message.includes('nota sigilosa') || message.includes('segredo')) {
         message = "Você tem uma nova atualização sigilosa no seu prontuário. Acesse o AxéCloud para conferir.";
       }
 
-      // Async Dispatch (Queue Simulation)
       setTimeout(async () => {
         try {
-          console.log(`[WHATSAPP] Dispatching message to ${phone}`);
-          
-          // Mock API Call (Adapt to real API like Evolution or Z-API)
-          // const response = await axios.post(`${config.api_url}/message/sendText/${config.instance_id}`, {
-          //   number: phone,
-          //   text: message
-          // }, { headers: { 'apikey': config.api_key } });
-
-          // For demo purposes, we'll just log it
           const externalId = `msg_${Math.random().toString(36).substr(2, 9)}`;
-
-          // Log the message
+          await enviarMensagem(user.id, phone, message);
           await supabaseAdmin.from('whatsapp_logs').insert({
             tenant_id: user.id,
             filho_id: filhoId,
@@ -3182,26 +3340,21 @@ async function startServer() {
             status: 'sent',
             external_id: externalId
           });
-
-          console.log(`[WHATSAPP] Message logged successfully: ${externalId}`);
         } catch (err: any) {
-          console.error("[WHATSAPP] Dispatch Error:", err.message);
+          console.error(`[WHATSAPP - ${user.id}] Dispatch Error:`, err?.message || err);
         }
-      }, 500); // Small delay to simulate queue
+      }, 500);
 
       res.json({ success: true, message: "Mensagem enfileirada para envio" });
     } catch (error: any) {
-      console.error("[WHATSAPP] Send Error:", error);
       res.status(500).json({ error: error.message });
     }
   });
 
-  // 3. Webhook for Status Updates
   app.post("/api/whatsapp/webhook", async (req, res) => {
-    const { instance, data } = req.body;
-    // This structure depends on the API provider (Evolution API example)
+    const { data } = req.body;
     const externalId = data?.key?.id;
-    const status = data?.status; // 'DELIVERY_ACK', 'READ', etc.
+    const status = data?.status;
 
     if (externalId) {
       let mappedStatus = 'sent';
@@ -3216,6 +3369,121 @@ async function startServer() {
 
     res.status(200).send('OK');
   });
+
+  app.post("/api/whatsapp/start", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Unauthorized" });
+
+      const session = getSession(user.id);
+      if (session.connectionStatus === 'CONNECTED') {
+        return res.json({ message: "WhatsApp já está conectado." });
+      }
+      
+      session.sock = null;
+      connectToWhatsApp(user.id);
+      res.json({ message: "Iniciando Baileys..." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/whatsapp/test-message", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Unauthorized" });
+
+      const { phone } = req.body;
+      if (!phone) return res.status(400).json({ error: "Telefone é obrigatório." });
+
+      const msg = "Axé! Este é um teste de conexão do AxéCloud. Se você recebeu isso, seu terreiro já está automatizado!";
+      const success = await enviarMensagem(user.id, phone, msg);
+      if (success) return res.json({ success: true, message: "Mensagem enviada com sucesso!" });
+      return res.status(500).json({ error: "Falha ao enviar." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/whatsapp/status", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Unauthorized" });
+
+      const session = getSession(user.id);
+      res.json({ status: session.connectionStatus, qrcode: session.qr });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/whatsapp/logout", async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
+
+    try {
+      const token = authHeader.replace("Bearer ", "");
+      const { user, error: authError } = await verifyUser(token);
+      if (authError || !user) return res.status(401).json({ error: "Unauthorized" });
+
+      const session = getSession(user.id);
+      if (session.sock) {
+        try {
+          await session.sock.logout();
+          session.sock = null;
+          session.connectionStatus = 'DISCONNECTED';
+          session.qr = null;
+          
+          const fs = await import('fs');
+          const path = await import('path');
+          const authPath = path.resolve(process.cwd(), 'auth_info', user.id);
+          if (fs.existsSync(authPath)) fs.rmSync(authPath, { recursive: true, force: true });
+        } catch (e) {
+          console.error(`[WP - ${user.id}] Falha ao deslogar:`, e);
+        }
+      }
+      
+      res.json({ message: "Sessão Baileys encerrada" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  setTimeout(async () => {
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      const authRoot = path.resolve(process.cwd(), 'auth_info');
+      
+      if (fs.existsSync(authRoot)) {
+        const directories = fs.readdirSync(authRoot, { withFileTypes: true })
+          .filter((dirent: any) => dirent.isDirectory())
+          .map((dirent: any) => dirent.name);
+        
+        for (const tenantId of directories) {
+          const credsPath = path.join(authRoot, tenantId, 'creds.json');
+          if (fs.existsSync(credsPath)) {
+            connectToWhatsApp(tenantId);
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[WP] Erro ao restaurar sessões antigas:", e);
+    }
+  }, 5000);
 
   // API Route: Kiwify Webhook
   app.post("/api/webhooks/kiwify", express.json(), async (req, res) => {
