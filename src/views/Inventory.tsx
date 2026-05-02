@@ -18,6 +18,7 @@ import { cn } from '../lib/utils';
 import { supabase } from '../lib/supabase';
 import LuxuryLoading from '../components/LuxuryLoading';
 import PageHeader from '../components/PageHeader';
+import BodyPortal from '../components/BodyPortal';
 
 interface Product {
   id: string;
@@ -421,7 +422,8 @@ export default function Inventory({ tenantData, userRole, isAdminGlobal, setActi
       {/* Modal: Novo Item */}
       <AnimatePresence>
         {isAddItemModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
+          <BodyPortal>
+          <div className="fixed inset-0 z-[100] flex min-h-0 items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div 
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsAddItemModalOpen(false)}
@@ -487,6 +489,7 @@ export default function Inventory({ tenantData, userRole, isAdminGlobal, setActi
               </form>
             </motion.div>
           </div>
+          </BodyPortal>
         )}
       </AnimatePresence>
 

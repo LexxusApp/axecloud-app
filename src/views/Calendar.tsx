@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '../lib/utils';
 import { supabase } from '../lib/supabase';
 import PageHeader from '../components/PageHeader';
+import BodyPortal from '../components/BodyPortal';
 import { SkeletonBlock, CalendarEventRowSkeleton } from '../components/Skeleton';
 import { readStaleCache, writeStaleCache } from '../lib/staleCache';
 import { hasPlanAccess, hasPremiumTierFeatures } from '../constants/plans';
@@ -1212,10 +1213,11 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
       )}
     </div>
 
-      {/* Add Event Modal */}
+      {/* Add Event Modal — portal evita fixed relativo ao main com backdrop-blur/scroll */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
+          <BodyPortal>
+          <div className="fixed inset-0 z-[100] flex min-h-0 items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
@@ -1357,6 +1359,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
               </form>
             </motion.div>
           </div>
+          </BodyPortal>
         )}
       </AnimatePresence>
 

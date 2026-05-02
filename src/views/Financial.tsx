@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabase';
 import LuxuryLoading from '../components/LuxuryLoading';
 import FinanceiroBasico from '../components/FinanceiroBasico';
 import PageHeader from '../components/PageHeader';
+import BodyPortal from '../components/BodyPortal';
 import { hasPlanAccess } from '../constants/plans';
 import {
   countsTowardSaldo,
@@ -1692,7 +1693,8 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
       {/* Add Transaction Modal */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
+          <BodyPortal>
+          <div className="fixed inset-0 z-[100] flex min-h-0 items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
@@ -1839,6 +1841,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
               </form>
             </motion.div>
           </div>
+          </BodyPortal>
         )}
       </AnimatePresence>
     </div>

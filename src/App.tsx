@@ -55,7 +55,7 @@ export function getIsSessionReady() {
 }
 
 // Bump local a cada rodada com mudanças para forçar logout/reload de validação.
-const SYSTEM_VERSION = `${BASE_SYSTEM_VERSION}-rtm13`;
+const SYSTEM_VERSION = `${BASE_SYSTEM_VERSION}-rtm14`;
 
 function readTenantAnchorFromStorage() {
   try {
