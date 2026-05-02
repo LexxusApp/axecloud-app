@@ -3070,6 +3070,61 @@ async function startServer() {
     }
   });
 
+  /**
+   * WhatsApp (Baileys) na Vercel: funções serverless não mantêm WebSocket nem Map em RAM entre invocações.
+   * - Produção: defina AXE_WHATSAPP_NODE_BASE_URL (ex.: https://api.seudominio.com) apontando para o mesmo app
+   *   rodando com processo Node contínuo (Railway/Fly/VPS com `tsx server.ts`). As rotas /api/whatsapp/* serão encaminhadas.
+   * - Sem proxy na Vercel: retornamos 503 com instruções (evita “carrega e não gera QR”).
+   */
+  const WHATSAPP_NODE_BASE = String(
+    process.env.AXE_WHATSAPP_NODE_BASE_URL || process.env.WHATSAPP_BAILEYS_BASE_URL || ""
+  )
+    .trim()
+    .replace(/\/$/, "");
+  const isVercelServerless = process.env.VERCEL === "1";
+
+  function whatsappVercelWithoutNodeMessage() {
+    return {
+      error:
+        "WhatsApp (Baileys) não funciona neste host serverless (Vercel): a conexão precisa de processo Node contínuo e armazenamento de sessão. Configure no painel da Vercel a variável AXE_WHATSAPP_NODE_BASE_URL com a URL pública do mesmo backend rodando em Railway/Fly/VPS (ex.: npm run dev com tsx server.ts), sem barra no final. Cada zelador continua com sessão própria (token Supabase).",
+      code: "WHATSAPP_VERCEL_SERVERLESS",
+    };
+  }
+
+  async function proxyWhatsappNodeRequest(req: express.Request, res: express.Response): Promise<boolean> {
+    if (!WHATSAPP_NODE_BASE) return false;
+    try {
+      const pathWithQuery = String((req as any).originalUrl || req.url || "");
+      const suffix = pathWithQuery.startsWith("/") ? pathWithQuery : `/${pathWithQuery}`;
+      const target = `${WHATSAPP_NODE_BASE}${suffix}`;
+      const headers: Record<string, string> = {};
+      const auth = req.headers.authorization;
+      if (auth) headers.authorization = typeof auth === "string" ? auth : String(auth);
+
+      const init: RequestInit = { method: req.method, headers };
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        headers["content-type"] = "application/json";
+        init.body = JSON.stringify((req.body ?? {}) as object);
+      }
+
+      console.info("[WP PROXY]", req.method, "->", target);
+      const r = await fetch(target, init);
+      const bodyText = await r.text();
+      const ctOut = r.headers.get("content-type");
+      if (ctOut) res.setHeader("content-type", ctOut);
+      res.status(r.status).send(bodyText);
+      return true;
+    } catch (e: any) {
+      console.error("[WP PROXY] Falha:", e?.message || e);
+      res.status(502).json({
+        error:
+          "Não foi possível contatar o serviço WhatsApp (Node). Confira AXE_WHATSAPP_NODE_BASE_URL e se o servidor está no ar.",
+        code: "WHATSAPP_PROXY_FAILED",
+      });
+      return true;
+    }
+  }
+
   // --- Baileys WhatsApp Provider Implementation (Multi-Tenant) ---
   
   type WhatsAppSession = {
@@ -3265,8 +3320,12 @@ async function startServer() {
   });
 
   app.post("/api/whatsapp/send", async (req, res) => {
+    if (await proxyWhatsappNodeRequest(req, res)) return;
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
+    if (isVercelServerless && !WHATSAPP_NODE_BASE) {
+      return res.status(503).json(whatsappVercelWithoutNodeMessage());
+    }
 
     try {
       const token = authHeader.replace("Bearer ", "");
@@ -3371,8 +3430,12 @@ async function startServer() {
   });
 
   app.post("/api/whatsapp/start", async (req, res) => {
+    if (await proxyWhatsappNodeRequest(req, res)) return;
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
+    if (isVercelServerless && !WHATSAPP_NODE_BASE) {
+      return res.status(503).json(whatsappVercelWithoutNodeMessage());
+    }
 
     try {
       const token = authHeader.replace("Bearer ", "");
@@ -3393,8 +3456,12 @@ async function startServer() {
   });
 
   app.post("/api/whatsapp/test-message", async (req, res) => {
+    if (await proxyWhatsappNodeRequest(req, res)) return;
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
+    if (isVercelServerless && !WHATSAPP_NODE_BASE) {
+      return res.status(503).json(whatsappVercelWithoutNodeMessage());
+    }
 
     try {
       const token = authHeader.replace("Bearer ", "");
@@ -3414,8 +3481,12 @@ async function startServer() {
   });
 
   app.get("/api/whatsapp/status", async (req, res) => {
+    if (await proxyWhatsappNodeRequest(req, res)) return;
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
+    if (isVercelServerless && !WHATSAPP_NODE_BASE) {
+      return res.status(503).json(whatsappVercelWithoutNodeMessage());
+    }
 
     try {
       const token = authHeader.replace("Bearer ", "");
@@ -3430,8 +3501,12 @@ async function startServer() {
   });
 
   app.post("/api/whatsapp/logout", async (req, res) => {
+    if (await proxyWhatsappNodeRequest(req, res)) return;
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: "Unauthorized" });
+    if (isVercelServerless && !WHATSAPP_NODE_BASE) {
+      return res.status(503).json(whatsappVercelWithoutNodeMessage());
+    }
 
     try {
       const token = authHeader.replace("Bearer ", "");
@@ -3461,29 +3536,32 @@ async function startServer() {
     }
   });
 
-  setTimeout(async () => {
-    try {
-      const fs = await import('fs');
-      const path = await import('path');
-      const authRoot = path.resolve(process.cwd(), 'auth_info');
-      
-      if (fs.existsSync(authRoot)) {
-        const directories = fs.readdirSync(authRoot, { withFileTypes: true })
-          .filter((dirent: any) => dirent.isDirectory())
-          .map((dirent: any) => dirent.name);
-        
-        for (const tenantId of directories) {
-          const credsPath = path.join(authRoot, tenantId, 'creds.json');
-          if (fs.existsSync(credsPath)) {
-            connectToWhatsApp(tenantId);
-            await new Promise(resolve => setTimeout(resolve, 3000));
+  if (!isVercelServerless) {
+    setTimeout(async () => {
+      try {
+        const fs = await import("fs");
+        const path = await import("path");
+        const authRoot = path.resolve(process.cwd(), "auth_info");
+
+        if (fs.existsSync(authRoot)) {
+          const directories = fs
+            .readdirSync(authRoot, { withFileTypes: true })
+            .filter((dirent: any) => dirent.isDirectory())
+            .map((dirent: any) => dirent.name);
+
+          for (const tenantId of directories) {
+            const credsPath = path.join(authRoot, tenantId, "creds.json");
+            if (fs.existsSync(credsPath)) {
+              connectToWhatsApp(tenantId);
+              await new Promise((resolve) => setTimeout(resolve, 3000));
+            }
           }
         }
+      } catch (e) {
+        console.error("[WP] Erro ao restaurar sessões antigas:", e);
       }
-    } catch (e) {
-      console.error("[WP] Erro ao restaurar sessões antigas:", e);
-    }
-  }, 5000);
+    }, 5000);
+  }
 
   // API Route: Kiwify Webhook
   app.post("/api/webhooks/kiwify", express.json(), async (req, res) => {
