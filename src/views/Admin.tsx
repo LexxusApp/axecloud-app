@@ -663,7 +663,7 @@ export default function Admin({ session: propSession, tenantData, setActiveTab }
 
       {/* Delete Confirmation Modal */}
       {isDeleteModalOpen && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-6">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto overscroll-y-contain p-6">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -707,7 +707,7 @@ export default function Admin({ session: propSession, tenantData, setActiveTab }
 
       {/* Registration Modal */}
       {isRegisterModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-y-contain p-6">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

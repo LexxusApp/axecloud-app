@@ -786,7 +786,7 @@ export default function MasterPortal({ session, onLogout, onSwitchToNormal }: Ma
       {/* Register Modal - Executive Redesign */}
       <AnimatePresence>
         {isRegisterModalOpen && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[200] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsRegisterModalOpen(false)} className="absolute inset-0 bg-black/95 backdrop-blur-sm" />
              <motion.div 
                initial={{ opacity: 0, scale: 0.98, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.98, y: 10 }}
@@ -869,7 +869,7 @@ export default function MasterPortal({ session, onLogout, onSwitchToNormal }: Ma
       {/* Delete Modal - Clean & Professional */}
       <AnimatePresence>
         {isDeleteModalOpen && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[200] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/98 backdrop-blur-md" />
             <motion.div 
               initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }}

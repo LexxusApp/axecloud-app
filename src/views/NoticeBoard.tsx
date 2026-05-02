@@ -480,7 +480,7 @@ export default function NoticeBoard({ isAdmin, tenantData, setActiveTab }: { isA
       {/* Post Modal */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
@@ -491,7 +491,7 @@ export default function NoticeBoard({ isAdmin, tenantData, setActiveTab }: { isA
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 60 }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-card shadow-2xl sm:max-w-2xl sm:rounded-3xl"
+              className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-w-2xl"
             >
               <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-4 sm:px-8">
                 <div className="min-w-0">
@@ -557,7 +557,7 @@ export default function NoticeBoard({ isAdmin, tenantData, setActiveTab }: { isA
       {/* Success Modal */}
       <AnimatePresence>
         {showSuccessModal && lastPostedNotice && (
-          <div className="fixed inset-0 z-[110] flex items-end justify-center sm:items-center sm:p-4">
+          <div className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setShowSuccessModal(false)}
@@ -568,7 +568,7 @@ export default function NoticeBoard({ isAdmin, tenantData, setActiveTab }: { isA
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 60 }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="relative z-10 w-[min(100%,20rem)] mx-3 sm:mx-4 sm:w-full overflow-hidden rounded-t-2xl sm:rounded-2xl border border-primary/20 bg-card shadow-[0_0_32px_rgba(251,188,0,0.08)] sm:max-w-sm"
+              className="relative z-10 w-[min(100%,20rem)] mx-3 sm:mx-4 sm:w-full overflow-hidden rounded-2xl border border-primary/20 bg-card shadow-[0_0_32px_rgba(251,188,0,0.08)] sm:max-w-sm"
             >
               <div className="overflow-y-auto px-4 py-5 sm:px-5 sm:py-6 text-center space-y-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-h-[88dvh] sm:max-h-[90dvh]">
                 <div className="w-14 h-14 sm:w-16 sm:h-16 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto border border-emerald-500/20">

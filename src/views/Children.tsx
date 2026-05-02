@@ -354,7 +354,7 @@ export default function Children({ setActiveTab, user, tenantData, setSelectedCh
       {/* Add Child Modal */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -367,7 +367,7 @@ export default function Children({ setActiveTab, user, tenantData, setSelectedCh
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 60 }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-card shadow-2xl sm:max-h-[90dvh] sm:max-w-lg sm:rounded-3xl"
+              className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-h-[90dvh] sm:max-w-lg"
             >
               {/* Header */}
               <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-4 sm:px-6">

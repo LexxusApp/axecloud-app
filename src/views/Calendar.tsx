@@ -807,7 +807,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
 
         <AnimatePresence>
           {filhoEventDetail && (
-            <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
+            <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -820,7 +820,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 60 }}
                 transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-                className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-card shadow-2xl sm:max-w-lg sm:rounded-3xl"
+                className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-w-lg"
               >
                 <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-4 sm:px-6">
                   <div className="flex min-w-0 items-center gap-3">
@@ -1215,7 +1215,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
       {/* Add Event Modal */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
@@ -1226,7 +1226,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 60 }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-card shadow-2xl sm:max-w-lg sm:rounded-3xl"
+              className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-w-lg"
             >
               <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-4 sm:px-6">
                 <div className="flex min-w-0 items-center gap-3">
@@ -1363,7 +1363,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
       {/* Guest Management Modal */}
       <AnimatePresence>
         {selectedEventForGuests && (
-          <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setSelectedEventForGuests(null)}
@@ -1374,7 +1374,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 60 }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-card shadow-2xl sm:max-w-2xl sm:rounded-3xl"
+              className="relative z-10 flex w-full max-h-[92dvh] flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-w-2xl"
             >
               <div className="flex shrink-0 flex-col gap-4 border-b border-white/5 px-5 py-4 sm:gap-6 sm:px-6">
                 <div className="flex items-center justify-between">
@@ -1656,7 +1656,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
         {itemToDelete && (
-          <div className="fixed inset-0 z-[150] flex items-end justify-center sm:items-center sm:p-4">
+          <div className="fixed inset-0 z-[150] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => !isDeleting && setItemToDelete(null)}
@@ -1667,7 +1667,7 @@ export default function Calendar({ user, userRole, tenantData, setActiveTab }: C
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 60 }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="relative z-10 w-full space-y-5 rounded-t-3xl border border-white/10 bg-card px-6 py-8 text-center shadow-2xl sm:max-w-md sm:rounded-3xl"
+              className="relative z-10 w-full space-y-5 rounded-3xl border border-white/10 bg-card px-6 py-8 text-center shadow-2xl sm:max-w-md"
             >
               <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-500/10">
                 <X className="h-8 w-8 text-red-500" />

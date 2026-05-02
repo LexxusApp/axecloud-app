@@ -177,7 +177,7 @@ export default function FinanceiroBasico({ tenantId, userId }: FinanceiroBasicoP
       {/* Modal de Lançamento */}
       <AnimatePresence>
         {isModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center sm:p-4">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsModalOpen(false)}
@@ -188,7 +188,7 @@ export default function FinanceiroBasico({ tenantId, userId }: FinanceiroBasicoP
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 60 }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="relative z-10 flex w-full flex-col overflow-hidden rounded-t-3xl border border-white/10 bg-card shadow-2xl sm:max-w-md sm:rounded-3xl"
+              className="relative z-10 flex w-full flex-col overflow-hidden rounded-3xl border border-white/10 bg-card shadow-2xl sm:max-w-md"
             >
               <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-4 sm:px-6">
                 <h3 className="text-base font-black text-white sm:text-xl">Novo Registro</h3>
@@ -258,7 +258,7 @@ export default function FinanceiroBasico({ tenantId, userId }: FinanceiroBasicoP
       {/* Modal de Upgrade */}
       <AnimatePresence>
         {isUpgradeModalOpen && (
-          <div className="fixed inset-0 z-[110] flex items-end justify-center sm:items-center sm:p-4">
+          <div className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto overscroll-y-contain p-4">
             <motion.div
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setIsUpgradeModalOpen(false)}
@@ -269,7 +269,7 @@ export default function FinanceiroBasico({ tenantId, userId }: FinanceiroBasicoP
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 60 }}
               transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-              className="relative z-10 w-full space-y-5 rounded-t-3xl border border-primary/20 bg-[#1B1C1C] px-6 py-8 text-center sm:max-w-md sm:rounded-3xl sm:px-10"
+              className="relative z-10 w-full space-y-5 rounded-3xl border border-primary/20 bg-[#1B1C1C] px-6 py-8 text-center sm:max-w-md sm:px-10"
             >
               <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
                 <Lock className="w-10 h-10 text-primary" />

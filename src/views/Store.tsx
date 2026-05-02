@@ -650,7 +650,17 @@ export default function Store({ userRole, tenantData, userId, isAdminGlobal, set
       <Dialog.Root open={isCartOpen} onOpenChange={setIsCartOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
-          <Dialog.Content className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-[#121212]/90 backdrop-blur-xl border-l border-white/10 z-[101] p-6 flex flex-col shadow-2xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-right-full duration-300">
+          <Dialog.Content
+            className={cn(
+              'fixed z-[101] flex w-full max-w-md flex-col overflow-hidden bg-[#121212]/90 p-6 shadow-2xl backdrop-blur-xl',
+              'max-h-[min(92dvh,calc(100dvh-2rem))] rounded-3xl border border-white/10',
+              'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 max-w-[min(28rem,calc(100vw-2rem))]',
+              'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-300',
+              'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
+              'sm:inset-y-0 sm:right-0 sm:left-auto sm:top-0 sm:bottom-0 sm:h-auto sm:max-h-none sm:max-w-md sm:translate-x-0 sm:translate-y-0 sm:rounded-none sm:border sm:border-l sm:border-y-0 sm:border-r-0 sm:border-b-0 sm:border-white/10',
+              'sm:data-[state=closed]:slide-out-to-right-full sm:data-[state=open]:slide-in-from-right-full sm:data-[state=closed]:zoom-out-100 sm:data-[state=open]:zoom-in-100',
+            )}
+          >
             <div className="flex items-center justify-between mb-8">
               <Dialog.Title className="text-2xl font-black text-white flex items-center gap-3">
                 <ShoppingBag className="w-6 h-6 text-primary" />
