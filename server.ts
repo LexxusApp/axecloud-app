@@ -165,6 +165,218 @@ type MensalidadeZeladorRow = {
   filhos_de_santo?: { nome: string } | null;
 };
 
+/** Cache: a tabela financeiro tem coluna status (plano novo) ou não (legado). */
+let financeiroStatusColumnSupportedCache: boolean | null = null;
+let financeiroStatusColumnResolveInFlight: Promise<boolean> | null = null;
+
+function errorIndicatesMissingFinanceiroStatusColumn(error: any): boolean {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    error?.code === "PGRST204" ||
+    (message.includes("status") &&
+      (message.includes("does not exist") ||
+        message.includes("schema cache") ||
+        message.includes("could not find")))
+  );
+}
+
+async function resolveFinanceiroStatusColumnSupported(supabaseAdmin: any): Promise<boolean> {
+  if (financeiroStatusColumnSupportedCache !== null) return financeiroStatusColumnSupportedCache;
+  if (!financeiroStatusColumnResolveInFlight) {
+    financeiroStatusColumnResolveInFlight = (async () => {
+      try {
+        const { error } = await supabaseAdmin.from("financeiro").select("status").limit(1);
+        if (!error) {
+          financeiroStatusColumnSupportedCache = true;
+          return true;
+        }
+        if (errorIndicatesMissingFinanceiroStatusColumn(error)) {
+          financeiroStatusColumnSupportedCache = false;
+          return false;
+        }
+        console.warn("[SERVER] financeiro status probe (assumindo ausente):", error?.message || error);
+        financeiroStatusColumnSupportedCache = false;
+        return false;
+      } finally {
+        financeiroStatusColumnResolveInFlight = null;
+      }
+    })();
+  }
+  return financeiroStatusColumnResolveInFlight;
+}
+
+/** Cache: financeiro tem coluna filho_id ou só o marcador `(ID:uuid)` na descrição (legado). */
+let financeiroFilhoIdColumnSupportedCache: boolean | null = null;
+let financeiroFilhoIdColumnResolveInFlight: Promise<boolean> | null = null;
+
+function errorIndicatesMissingFinanceiroFilhoIdColumn(error: any): boolean {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    error?.code === "PGRST204" ||
+    (message.includes("filho_id") &&
+      (message.includes("does not exist") ||
+        message.includes("schema cache") ||
+        message.includes("could not find")))
+  );
+}
+
+async function resolveFinanceiroFilhoIdColumnSupported(supabaseAdmin: any): Promise<boolean> {
+  if (financeiroFilhoIdColumnSupportedCache !== null) return financeiroFilhoIdColumnSupportedCache;
+  if (!financeiroFilhoIdColumnResolveInFlight) {
+    financeiroFilhoIdColumnResolveInFlight = (async () => {
+      try {
+        const { error } = await supabaseAdmin.from("financeiro").select("filho_id").limit(1);
+        if (!error) {
+          financeiroFilhoIdColumnSupportedCache = true;
+          return true;
+        }
+        if (errorIndicatesMissingFinanceiroFilhoIdColumn(error)) {
+          financeiroFilhoIdColumnSupportedCache = false;
+          return false;
+        }
+        console.warn("[SERVER] financeiro filho_id probe (assumindo ausente):", error?.message || error);
+        financeiroFilhoIdColumnSupportedCache = false;
+        return false;
+      } finally {
+        financeiroFilhoIdColumnResolveInFlight = null;
+      }
+    })();
+  }
+  return financeiroFilhoIdColumnResolveInFlight;
+}
+
+/** Legado: vínculo do filho na descrição `... (ID:uuid)`. */
+function extractFilhoIdFromMensalidadeDescricao(descricao: string | null | undefined): string | null {
+  const m = String(descricao || "").match(/\(ID:([0-9a-fA-F-]{36})\)/);
+  return m ? m[1] : null;
+}
+
+function deriveMensalidadeFilhoId(row: any): string | null {
+  const direct = row?.filho_id;
+  if (direct != null && String(direct).trim() !== "") return String(direct).trim().toLowerCase();
+  const fromDesc = extractFilhoIdFromMensalidadeDescricao(row?.descricao);
+  return fromDesc ? fromDesc.toLowerCase() : null;
+}
+
+/** yyyy-MM-dd para comparação de intervalo (aceita ISO ou dd/mm/aaaa vindo do banco/UI). */
+function financeiroCampoParaYmdIso(raw: unknown): string | null {
+  const s = raw != null ? String(raw).trim() : "";
+  if (!s) return null;
+  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+  if (iso) return iso[1];
+  const dmy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s);
+  if (dmy) {
+    const dd = dmy[1].padStart(2, "0");
+    const mm = dmy[2].padStart(2, "0");
+    return `${dmy[3]}-${mm}-${dd}`;
+  }
+  return null;
+}
+
+function mensalidadeVencimentoOuDataYmd(row: any): string | null {
+  return financeiroCampoParaYmdIso((row as any).data_vencimento) ?? financeiroCampoParaYmdIso((row as any).data);
+}
+
+function mensalidadeYmdDentroDoMesCalendario(ymd: string | null, monthStart: string, monthEnd: string): boolean {
+  if (!ymd) return false;
+  const d = ymd.length >= 10 ? ymd.slice(0, 10) : ymd;
+  return d >= monthStart.slice(0, 10) && d <= monthEnd.slice(0, 10);
+}
+
+function enrichMensalidadeRowsWithFilhoId(rows: MensalidadeZeladorRow[]): MensalidadeZeladorRow[] {
+  return rows.map((row) => {
+    const derived = deriveMensalidadeFilhoId(row);
+    if (!derived) return row;
+    return { ...row, filho_id: derived };
+  });
+}
+
+function mensalidadeDescricaoIsCobrancaPendente(descricao: string | null | undefined): boolean {
+  return String(descricao || "").toLowerCase().includes("(vencimento");
+}
+
+function mensalidadeDescricaoIsPagamentoRegistrado(descricao: string | null | undefined): boolean {
+  const d = String(descricao || "").toLowerCase();
+  return d.includes("(competência") || d.includes("(competencia");
+}
+
+function rowIsMensalidadePendenteSemStatusColumn(row: any): boolean {
+  if (String(row.categoria || "") !== "Mensalidade" || !deriveMensalidadeFilhoId(row)) return false;
+  return mensalidadeDescricaoIsCobrancaPendente(row.descricao);
+}
+
+function rowIsMensalidadePagaSemStatusColumn(row: any): boolean {
+  if (String(row.categoria || "") !== "Mensalidade" || !deriveMensalidadeFilhoId(row)) return false;
+  if (rowIsMensalidadePendenteSemStatusColumn(row)) return false;
+  const tipo = String(row.tipo || "").toLowerCase();
+  return (
+    mensalidadeDescricaoIsPagamentoRegistrado(row.descricao) ||
+    tipo === "entrada" ||
+    tipo === "receita" ||
+    tipo === ""
+  );
+}
+
+/** Com coluna `status`: pendente explícito OU legado com status vazio (evita sync inserir de novo). */
+function rowIsMensalidadePendenteForDueCheck(row: any, supportsStatus: boolean): boolean {
+  if (String(row.categoria || "") !== "Mensalidade" || !deriveMensalidadeFilhoId(row)) return false;
+  if (!supportsStatus) return rowIsMensalidadePendenteSemStatusColumn(row);
+  const st = String(row.status ?? "").trim().toLowerCase();
+  if (st === "pago" || st === "paid" || st === "confirmado") return false;
+  if (st === "pendente" || st === "pending") return true;
+  return rowIsMensalidadePendenteSemStatusColumn(row);
+}
+
+/** Uma linha por filho + mês (data de vencimento ou data), mantém a mais recente. */
+function dedupeMensalidadesPendentesPorFilhoMes(rows: MensalidadeZeladorRow[]): MensalidadeZeladorRow[] {
+  const byKey = new Map<string, MensalidadeZeladorRow>();
+  for (const row of rows) {
+    const fid = deriveMensalidadeFilhoId(row);
+    if (!fid) continue;
+    const ymd = mensalidadeVencimentoOuDataYmd(row);
+    const monthKey = ymd && ymd.length >= 7 ? ymd.slice(0, 7) : "";
+    const k = `${fid}|${monthKey}`;
+    const prev = byKey.get(k);
+    if (!prev) {
+      byKey.set(k, row);
+      continue;
+    }
+    const ta = new Date(String((prev as any).created_at || "")).getTime();
+    const tb = new Date(String((row as any).created_at || "")).getTime();
+    const useRow = tb > ta || (tb === ta && String(row.id) > String(prev.id));
+    if (useRow) byKey.set(k, row);
+  }
+  return Array.from(byKey.values());
+}
+
+/** PostgREST embed exige FK declarada entre tabelas; sem FK buscamos nomes em lote. */
+async function attachFilhosNomesMensalidades(
+  supabaseAdmin: any,
+  rows: MensalidadeZeladorRow[]
+): Promise<MensalidadeZeladorRow[]> {
+  const ids = [
+    ...new Set(
+      rows
+        .map((r) => deriveMensalidadeFilhoId(r) || r.filho_id)
+        .filter((id): id is string => typeof id === "string" && id.trim() !== "")
+    ),
+  ];
+  if (ids.length === 0) return rows;
+  const { data: filhos, error } = await supabaseAdmin.from("filhos_de_santo").select("id, nome").in("id", ids);
+  if (error || !filhos?.length) return rows;
+  const nomeById = new Map<string, string>(
+    (filhos as { id: string; nome: string | null }[]).map((f) => [
+      String(f.id).trim().toLowerCase(),
+      String(f.nome || "").trim() || "Filho de santo",
+    ])
+  );
+  return rows.map((row) => {
+    const fid = deriveMensalidadeFilhoId(row) || (row.filho_id != null ? String(row.filho_id).trim().toLowerCase() : null);
+    if (!fid || !nomeById.has(fid)) return row;
+    return { ...row, filho_id: fid, filhos_de_santo: { nome: nomeById.get(fid)! } };
+  });
+}
+
 async function assertZeladorTenantAccess(
   supabaseAdmin: any,
   resolveLeaderId: (id: string) => Promise<string>,
@@ -187,41 +399,124 @@ async function hasPaidMensalidadeInCalendarMonth(
   filhoId: string,
   ref: Date
 ): Promise<boolean> {
+  const supportsStatus = await resolveFinanceiroStatusColumnSupported(supabaseAdmin);
+  const supportsFilhoId = await resolveFinanceiroFilhoIdColumnSupported(supabaseAdmin);
   const y = ref.getFullYear();
   const m0 = ref.getMonth();
   const start = `${y}-${String(m0 + 1).padStart(2, "0")}-01`;
   const last = new Date(y, m0 + 1, 0).getDate();
   const endStr = `${y}-${String(m0 + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
-  const { data, error } = await supabaseAdmin
+  const selectCols = supportsStatus ? "id, status, categoria, tipo, descricao" : "id, categoria, tipo, descricao";
+  let q = supabaseAdmin
     .from("financeiro")
-    .select("id, status, categoria, tipo")
-    .eq("filho_id", filhoId)
+    .select(selectCols)
     .eq("categoria", "Mensalidade")
     .gte("data", start)
     .lte("data", endStr);
+  const fidNorm = String(filhoId || "").trim().toLowerCase();
+  if (supportsFilhoId) q = q.eq("filho_id", filhoId);
+  else q = q.ilike("descricao", `%ID:${fidNorm}%`);
+  const { data, error } = await q;
   if (error) return false;
   for (const r of data || []) {
-    const st = String((r as any).status || "").toLowerCase();
-    if (st === "pendente" || st === "excluido") continue;
-    const tipo = String((r as any).tipo || "").toLowerCase();
-    if (tipo === "entrada" || tipo === "receita" || tipo === "") return true;
+    if (!supportsFilhoId && deriveMensalidadeFilhoId(r) !== fidNorm) continue;
+    if (supportsStatus) {
+      const st = String((r as any).status || "").toLowerCase();
+      const isPaidStatus = st === "pago" || st === "paid" || st === "confirmado";
+      if (!isPaidStatus) continue;
+      const tipo = String((r as any).tipo || "").toLowerCase();
+      if (tipo === "entrada" || tipo === "receita" || tipo === "") return true;
+    } else if (rowIsMensalidadePagaSemStatusColumn(r)) {
+      return true;
+    }
   }
   return false;
 }
 
+/** Pendência de mensalidade cujo vencimento (ou data) cai no mês [monthStart, monthEnd]. */
+async function hasPendingMensalidadeForDueMonth(
+  supabaseAdmin: any,
+  filhoId: string,
+  monthStart: string,
+  monthEnd: string
+): Promise<boolean> {
+  const supportsStatus = await resolveFinanceiroStatusColumnSupported(supabaseAdmin);
+  const supportsFilhoId = await resolveFinanceiroFilhoIdColumnSupported(supabaseAdmin);
+  let selectCols = supportsFilhoId
+    ? "id, data, data_vencimento, descricao, categoria, filho_id"
+    : "id, data, data_vencimento, descricao, categoria";
+  if (supportsStatus) selectCols += ",status";
+  let q = supabaseAdmin.from("financeiro").select(selectCols).eq("categoria", "Mensalidade");
+  if (supportsFilhoId) q = q.eq("filho_id", filhoId);
+  else q = q.ilike("descricao", `%ID:${filhoId}%`);
+  const { data, error } = await q;
+  if (error) {
+    console.warn(
+      "[SERVER] hasPendingMensalidadeForDueMonth: erro na query — não inserir sync; tratar como já existente:",
+      error?.message || error
+    );
+    return true;
+  }
+  const fidNorm = String(filhoId || "").trim().toLowerCase();
+  for (const r of data || []) {
+    if (deriveMensalidadeFilhoId(r) !== fidNorm) continue;
+    if (!rowIsMensalidadePendenteForDueCheck(r, supportsStatus)) continue;
+    const ymd = mensalidadeVencimentoOuDataYmd(r);
+    if (mensalidadeYmdDentroDoMesCalendario(ymd, monthStart, monthEnd)) return true;
+  }
+  return false;
+}
+
+/** Filho já existia no terreiro até o dia do vencimento deste mês (evita mensalidade antes da entrada). */
+function childEligibleForDueMonth(child: any, dueStr: string): boolean {
+  const raw = (child as any).data_entrada || (child as any).created_at;
+  if (!raw) return true;
+  const parsed = parseISO(String(raw).trim().slice(0, 10));
+  if (!isValid(parsed)) return true;
+  const due = startOfDay(parseISO(dueStr));
+  return startOfDay(parsed).getTime() <= due.getTime();
+}
+
 async function fetchMensalidadesPendentesList(
   supabaseAdmin: any,
-  tenantId: string
+  tenantId: string,
+  ref: Date = new Date()
 ): Promise<MensalidadeZeladorRow[]> {
-  const { data, error } = await supabaseAdmin
+  const supportsStatus = await resolveFinanceiroStatusColumnSupported(supabaseAdmin);
+  const y = ref.getFullYear();
+  const m0 = ref.getMonth();
+  const start = `${y}-${String(m0 + 1).padStart(2, "0")}-01`;
+  const last = new Date(y, m0 + 1, 0).getDate();
+  const endStr = `${y}-${String(m0 + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
+
+  let q = supabaseAdmin
     .from("financeiro")
-    .select("*, filhos_de_santo(nome)")
+    .select("*")
     .or(`tenant_id.eq.${tenantId},lider_id.eq.${tenantId}`)
-    .eq("categoria", "Mensalidade")
-    .eq("status", "pendente")
-    .order("data", { ascending: true });
+    .eq("categoria", "Mensalidade");
+  if (!supportsStatus) {
+    q = q.ilike("descricao", "%(vencimento%");
+  }
+  const { data, error } = await q;
   if (error) throw error;
-  return (data || []) as MensalidadeZeladorRow[];
+  const pendentesMesAtual = ((data || []) as MensalidadeZeladorRow[]).filter((row) => {
+    const ymd = mensalidadeVencimentoOuDataYmd(row);
+    if (!mensalidadeYmdDentroDoMesCalendario(ymd, start, endStr)) return false;
+    if (!deriveMensalidadeFilhoId(row)) return false;
+    return rowIsMensalidadePendenteForDueCheck(row, supportsStatus);
+  });
+  pendentesMesAtual.sort((a, b) => {
+    const aRef = String((a as any).data_vencimento || a.data || "").slice(0, 10);
+    const bRef = String((b as any).data_vencimento || b.data || "").slice(0, 10);
+    return aRef.localeCompare(bRef);
+  });
+  const deduped = dedupeMensalidadesPendentesPorFilhoMes(pendentesMesAtual);
+  deduped.sort((a, b) => {
+    const aRef = String((a as any).data_vencimento || a.data || "").slice(0, 10);
+    const bRef = String((b as any).data_vencimento || b.data || "").slice(0, 10);
+    return aRef.localeCompare(bRef);
+  });
+  return attachFilhosNomesMensalidades(supabaseAdmin, enrichMensalidadeRowsWithFilhoId(deduped));
 }
 
 async function fetchMensalidadesPagasMesAtual(
@@ -229,22 +524,27 @@ async function fetchMensalidadesPagasMesAtual(
   tenantId: string,
   ref: Date = new Date()
 ): Promise<MensalidadeZeladorRow[]> {
+  const supportsStatus = await resolveFinanceiroStatusColumnSupported(supabaseAdmin);
   const y = ref.getFullYear();
   const m0 = ref.getMonth();
   const start = `${y}-${String(m0 + 1).padStart(2, "0")}-01`;
   const last = new Date(y, m0 + 1, 0).getDate();
   const endStr = `${y}-${String(m0 + 1).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
-  const { data, error } = await supabaseAdmin
+  let q = supabaseAdmin
     .from("financeiro")
-    .select("*, filhos_de_santo(nome)")
+    .select("*")
     .or(`tenant_id.eq.${tenantId},lider_id.eq.${tenantId}`)
     .eq("categoria", "Mensalidade")
-    .eq("status", "pago")
     .gte("data", start)
     .lte("data", endStr)
     .order("data", { ascending: false });
+  if (supportsStatus) q = q.eq("status", "pago");
+  const { data, error } = await q;
   if (error) throw error;
-  return (data || []) as MensalidadeZeladorRow[];
+  const rows = (data || []) as MensalidadeZeladorRow[];
+  const withChild = rows.filter((row) => deriveMensalidadeFilhoId(row));
+  const filtered = supportsStatus ? withChild : withChild.filter((row) => rowIsMensalidadePagaSemStatusColumn(row));
+  return attachFilhosNomesMensalidades(supabaseAdmin, enrichMensalidadeRowsWithFilhoId(filtered));
 }
 
 async function syncMensalidadesPendentes(
@@ -268,7 +568,7 @@ async function syncMensalidadesPendentes(
 
   const { data: children, error: chErr } = await supabaseAdmin
     .from("filhos_de_santo")
-    .select("id, nome, tenant_id, lider_id, created_at, data_entrada")
+    .select("id, nome, tenant_id, lider_id, created_at, data_entrada, status")
     .or(`tenant_id.eq.${tenantId},tenant_id.eq.${resolvedTenant}`);
   if (chErr) throw chErr;
   const rows = (children || []).filter((c: any) => {
@@ -282,22 +582,37 @@ async function syncMensalidadesPendentes(
   });
 
   const ref = new Date();
+  const y = ref.getFullYear();
+  const m0 = ref.getMonth();
+  const monthStart = `${y}-${String(m0 + 1).padStart(2, "0")}-01`;
+  const lastDay = new Date(y, m0 + 1, 0).getDate();
+  const monthEnd = `${y}-${String(m0 + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+  const dueStr = format(clampDayInMonth(y, m0, dia), "yyyy-MM-dd");
+
+  const supportsStatus = await resolveFinanceiroStatusColumnSupported(supabaseAdmin);
+  const supportsFilhoId = await resolveFinanceiroFilhoIdColumnSupported(supabaseAdmin);
+
   let created = 0;
   for (const child of rows) {
+    const stFilho = String((child as any).status || "Ativo")
+      .trim()
+      .toLowerCase();
+    if (stFilho && stFilho !== "ativo") continue;
+
     const fid = child.id as string;
-    const { data: pend } = await supabaseAdmin
-      .from("financeiro")
-      .select("id")
-      .eq("filho_id", fid)
-      .eq("categoria", "Mensalidade")
-      .eq("status", "pendente")
-      .limit(1);
-    if (pend && pend.length > 0) continue;
+    if (!childEligibleForDueMonth(child, dueStr)) continue;
+
+    const pendingThisMonth = await hasPendingMensalidadeForDueMonth(
+      supabaseAdmin,
+      fid,
+      monthStart,
+      monthEnd
+    );
+    if (pendingThisMonth) continue;
+
     const paid = await hasPaidMensalidadeInCalendarMonth(supabaseAdmin, fid, ref);
     if (paid) continue;
 
-    const inc = (child as any).data_entrada || (child as any).created_at;
-    const dueStr = computeProximaDataMensalidadePrevisao(inc, dia, ref);
     const nome = String((child as any).nome || "Filho").trim() || "Filho";
     const insert: Record<string, unknown> = {
       tipo: "entrada",
@@ -305,17 +620,22 @@ async function syncMensalidadesPendentes(
       categoria: "Mensalidade",
       data: dueStr,
       descricao: `Mensalidade - ${nome} (vencimento ${dueStr}) (ID:${fid})`,
-      status: "pendente",
       tenant_id: tenantId,
       lider_id: userId,
-      filho_id: fid,
       data_vencimento: dueStr,
     };
+    if (supportsFilhoId) insert.filho_id = fid;
+    if (supportsStatus) insert.status = "pendente";
     let { error: insErr } = await supabaseAdmin.from("financeiro").insert([insert]);
     if (insErr && String(insErr.message || "").includes("data_vencimento")) {
       delete insert.data_vencimento;
       const r2 = await supabaseAdmin.from("financeiro").insert([insert]);
       insErr = r2.error;
+    }
+    if (insErr && String(insErr.message || "").includes("filho_id")) {
+      delete insert.filho_id;
+      const r3 = await supabaseAdmin.from("financeiro").insert([insert]);
+      insErr = r3.error;
     }
     if (!insErr) created += 1;
   }
@@ -352,15 +672,21 @@ async function liquidarMensalidadePendente(
   if (!rowTenantMatches(row, tenantId, resolved, userId)) {
     throw new Error("Sem permissão para este lançamento");
   }
+  const supportsStatus = await resolveFinanceiroStatusColumnSupported(supabaseAdmin);
   const st = String(row.status || "").toLowerCase();
-  if (st !== "pendente") throw new Error("Este registro não está pendente");
+  if (supportsStatus) {
+    if (st !== "pendente") throw new Error("Este registro não está pendente");
+  } else if (!rowIsMensalidadePendenteSemStatusColumn(row)) {
+    throw new Error("Este registro não está pendente");
+  }
   if (String(row.categoria || "") !== "Mensalidade") throw new Error("Tipo de lançamento inválido");
 
   const paymentDate = new Date().toISOString().split("T")[0];
   const v = Number.isFinite(valorOverride) && (valorOverride as number) > 0 ? (valorOverride as number) : Number(row.valor) || 0;
   if (v <= 0) throw new Error("Valor inválido");
 
-  const filhoId = row.filho_id as string;
+  const filhoId = deriveMensalidadeFilhoId(row);
+  if (!filhoId) throw new Error("Lançamento sem vínculo de filho (filho_id ou ID na descrição)");
   const { data: child } = await supabaseAdmin
     .from("filhos_de_santo")
     .select("nome")
@@ -369,17 +695,16 @@ async function liquidarMensalidadePendente(
   const nome = String(child?.nome || "Filho").trim() || "Filho";
   const comp = String(row.data_vencimento || row.data || paymentDate).slice(0, 10);
 
-  const { error: upErr } = await supabaseAdmin
-    .from("financeiro")
-    .update({
-      status: "pago",
-      tipo: "entrada",
-      valor: v,
-      data: paymentDate,
-      descricao: `Mensalidade - ${nome} (competência ${comp}) (ID:${filhoId})`,
-    })
-    .eq("id", financeiroId)
-    .eq("status", "pendente");
+  const up: Record<string, unknown> = {
+    tipo: "entrada",
+    valor: v,
+    data: paymentDate,
+    descricao: `Mensalidade - ${nome} (competência ${comp}) (ID:${filhoId})`,
+  };
+  if (supportsStatus) up.status = "pago";
+  let upd = supabaseAdmin.from("financeiro").update(up).eq("id", financeiroId);
+  if (supportsStatus) upd = upd.eq("status", "pendente");
+  const { error: upErr } = await upd;
   if (upErr) throw upErr;
   return { ok: true };
 }
@@ -398,8 +723,13 @@ async function estornarMensalidadePaga(
   if (!rowTenantMatches(row, tenantId, resolved, userId)) {
     throw new Error("Sem permissão para este lançamento");
   }
+  const supportsStatus = await resolveFinanceiroStatusColumnSupported(supabaseAdmin);
   const st = String(row.status || "").toLowerCase();
-  if (st !== "pago") throw new Error("Apenas mensalidades marcadas como pagas podem ser estornadas");
+  if (supportsStatus) {
+    if (st !== "pago") throw new Error("Apenas mensalidades marcadas como pagas podem ser estornadas");
+  } else if (!rowIsMensalidadePagaSemStatusColumn(row)) {
+    throw new Error("Apenas mensalidades marcadas como pagas podem ser estornadas");
+  }
   if (String(row.categoria || "") !== "Mensalidade") throw new Error("Tipo de lançamento inválido");
 
   const y = ref.getFullYear();
@@ -413,7 +743,8 @@ async function estornarMensalidadePaga(
   }
 
   const due = String(row.data_vencimento || row.data || payDay).slice(0, 10);
-  const filhoId = row.filho_id as string;
+  const filhoId = deriveMensalidadeFilhoId(row);
+  if (!filhoId) throw new Error("Lançamento sem vínculo de filho (filho_id ou ID na descrição)");
   const { data: child } = await supabaseAdmin
     .from("filhos_de_santo")
     .select("nome")
@@ -421,16 +752,15 @@ async function estornarMensalidadePaga(
     .maybeSingle();
   const nome = String(child?.nome || "Filho").trim() || "Filho";
 
-  const { error: upErr } = await supabaseAdmin
-    .from("financeiro")
-    .update({
-      status: "pendente",
-      tipo: "entrada",
-      data: due,
-      descricao: `Mensalidade - ${nome} (vencimento ${due}) (ID:${filhoId})`,
-    })
-    .eq("id", financeiroId)
-    .eq("status", "pago");
+  const up: Record<string, unknown> = {
+    tipo: "entrada",
+    data: due,
+    descricao: `Mensalidade - ${nome} (vencimento ${due}) (ID:${filhoId})`,
+  };
+  if (supportsStatus) up.status = "pendente";
+  let upd = supabaseAdmin.from("financeiro").update(up).eq("id", financeiroId);
+  if (supportsStatus) upd = upd.eq("status", "pago");
+  const { error: upErr } = await upd;
   if (upErr) throw upErr;
   return { ok: true };
 }
@@ -569,18 +899,20 @@ async function initializeDatabase() {
       console.warn("[SERVER] Por favor, execute o comando: ALTER TABLE perfil_lider ADD COLUMN IF NOT EXISTS foto_url TEXT;");
     }
 
-    // 3. Tenta verificar se a coluna filho_id existe na tabela financeiro
-    const { error: finError } = await supabaseAdmin.from('financeiro').select('filho_id').limit(1);
-    if (finError && (finError.message.includes('column "filho_id" does not exist') || finError.code === 'PGRST204')) {
-      console.warn("[SERVER] ATENÇÃO: A coluna 'filho_id' não existe na tabela 'financeiro'.");
-      console.warn("[SERVER] Por favor, execute o comando: ALTER TABLE financeiro ADD COLUMN filho_id UUID;");
+    // 3. Coluna filho_id em financeiro (opcional): sem ela, o vínculo fica só em `(ID:uuid)` na descrição.
+    const supportsFilhoIdCol = await resolveFinanceiroFilhoIdColumnSupported(supabaseAdmin);
+    if (!supportsFilhoIdCol) {
+      console.warn(
+        "[SERVER] Coluna 'filho_id' ausente em 'financeiro'. Mensalidades usam o marcador (ID:uuid) na descrição."
+      );
     }
 
-    // 4. Tenta verificar se a coluna status existe na tabela financeiro
-    const { error: finStatusError } = await supabaseAdmin.from('financeiro').select('status').limit(1);
-    if (finStatusError && (finStatusError.message.includes('column "status" does not exist') || finStatusError.code === 'PGRST204')) {
-      console.warn("[SERVER] ATENÇÃO: A coluna 'status' não existe na tabela 'financeiro'.");
-      console.warn("[SERVER] Por favor, execute o comando: ALTER TABLE financeiro ADD COLUMN status TEXT DEFAULT 'pago';");
+    // 4. Coluna status em financeiro (opcional): sem ela, mensalidades usam legado na descrição (vencimento/competência).
+    const supportsFinStatus = await resolveFinanceiroStatusColumnSupported(supabaseAdmin);
+    if (!supportsFinStatus) {
+      console.warn(
+        "[SERVER] Coluna 'status' ausente em 'financeiro'. Mensalidades pendentes/pagas usam marcadores (vencimento) / (competência) na descrição."
+      );
     }
 
     // 5. Tenta verificar se a coluna valor_mensalidade existe na tabela configuracoes_pix

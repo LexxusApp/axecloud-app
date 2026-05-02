@@ -13,7 +13,7 @@
 @layer base {
   html {
     @apply transition-[font-size] duration-300;
-    overscroll-behavior-y: contain;
+    overscroll-behavior: none;
   }
 
   @media (min-width: 1024px) {
@@ -24,7 +24,11 @@
 
   body {
     @apply bg-background text-zinc-100 font-sans antialiased min-h-screen relative;
-    overscroll-behavior-y: contain;
+    overscroll-behavior: none;
+  }
+
+  #root {
+    overscroll-behavior: none;
   }
 
   select option {

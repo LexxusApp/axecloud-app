@@ -41,9 +41,18 @@ export function normalizeMovimentoTipo(tipo: string | undefined | null): 'entrad
 }
 
 /** Inclui no saldo exibido: sem coluna status (legado) ou valores tratados como confirmados/pagos. */
-export function countsTowardSaldo(t: { status?: string | null }): boolean {
+export function countsTowardSaldo(t: {
+  status?: string | null;
+  descricao?: string | null;
+  categoria?: string | null;
+}): boolean {
   const s = (t.status || '').toLowerCase().trim();
-  if (!s) return true;
+  if (!s) {
+    const cat = String(t.categoria || '').toLowerCase();
+    const desc = String(t.descricao || '').toLowerCase();
+    if (cat === 'mensalidade' && desc.includes('(vencimento')) return false;
+    return true;
+  }
   if (s === 'confirmado' || s === 'confirmada' || s === 'pago' || s === 'paid') return true;
   if (
     s === 'pendente' ||

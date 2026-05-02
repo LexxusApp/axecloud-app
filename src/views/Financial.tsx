@@ -26,6 +26,7 @@ type MensalidadeZeladorRow = {
   descricao: string | null;
   categoria: string | null;
   tipo?: string | null;
+  created_at?: string | null;
   filhos_de_santo?: { nome: string } | null;
 };
 
@@ -39,6 +40,94 @@ function mensalidadeStatusIsPending(status: string | null) {
 function mensalidadeStatusIsPaid(status: string | null) {
   const t = String(status ?? '').toLowerCase();
   return t === 'pago' || t === 'paid';
+}
+
+/** Legado sem coluna `status`: vínculo do filho em `... (ID:uuid)` na descrição (igual ao servidor). */
+function extractFilhoIdFromMensalidadeDescricao(descricao: string | null | undefined): string | null {
+  const m = String(descricao || '').match(/\(ID:([0-9a-fA-F-]{36})\)/);
+  return m ? m[1].toLowerCase() : null;
+}
+
+function deriveMensalidadeFilhoIdUi(row: MensalidadeZeladorRow): string | null {
+  const direct = row?.filho_id;
+  if (direct != null && String(direct).trim() !== '') return String(direct).trim().toLowerCase();
+  return extractFilhoIdFromMensalidadeDescricao(row?.descricao);
+}
+
+function financeiroRawParaYmdIso(raw: string | null | undefined): string | null {
+  const s = raw != null ? String(raw).trim() : '';
+  if (!s) return null;
+  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+  if (iso) return iso[1];
+  const dmy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s);
+  if (dmy) {
+    return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  }
+  return null;
+}
+
+function mensalidadeYmdPreferVenc(row: MensalidadeZeladorRow): string | null {
+  return financeiroRawParaYmdIso(row.data_vencimento) ?? financeiroRawParaYmdIso(row.data);
+}
+
+/** Uma linha por filho + mês (alinhado ao servidor; cobre respostas antigas sem dedupe). */
+function dedupeMensalidadesPorFilhoMesClient(rows: MensalidadeZeladorRow[]): MensalidadeZeladorRow[] {
+  const byKey = new Map<string, MensalidadeZeladorRow>();
+  for (const row of rows) {
+    const fid = deriveMensalidadeFilhoIdUi(row);
+    if (!fid) continue;
+    const ymd = mensalidadeYmdPreferVenc(row);
+    const mk = ymd && ymd.length >= 7 ? ymd.slice(0, 7) : '';
+    const k = `${fid}|${mk}`;
+    const prev = byKey.get(k);
+    if (!prev) {
+      byKey.set(k, row);
+      continue;
+    }
+    const ta = new Date(String((prev as MensalidadeZeladorRow).created_at || '')).getTime();
+    const tb = new Date(String((row as MensalidadeZeladorRow).created_at || '')).getTime();
+    if (tb > ta || (tb === ta && String(row.id) > String(prev.id))) byKey.set(k, row);
+  }
+  return Array.from(byKey.values());
+}
+
+function rowIsMensalidadePendenteLegacy(row: MensalidadeZeladorRow): boolean {
+  if (String(row.categoria || '') !== 'Mensalidade' || !deriveMensalidadeFilhoIdUi(row)) return false;
+  return String(row.descricao || '').toLowerCase().includes('(vencimento');
+}
+
+function rowIsMensalidadePagaLegacy(row: MensalidadeZeladorRow): boolean {
+  if (String(row.categoria || '') !== 'Mensalidade' || !deriveMensalidadeFilhoIdUi(row)) return false;
+  if (rowIsMensalidadePendenteLegacy(row)) return false;
+  const d = String(row.descricao || '').toLowerCase();
+  const tipo = String(row.tipo || '').toLowerCase();
+  return (
+    d.includes('(competência') ||
+    d.includes('(competencia') ||
+    tipo === 'entrada' ||
+    tipo === 'receita' ||
+    tipo === ''
+  );
+}
+
+/** Aba Pendentes: coluna status OU legado por texto na descrição (API já filtra mês; UI não pode descartar status null). */
+function mensalidadeRowIsPendenteForTabs(row: MensalidadeZeladorRow): boolean {
+  if (mensalidadeStatusIsPaid(row.status)) return false;
+  if (mensalidadeStatusIsPending(row.status)) return true;
+  const st = String(row.status ?? '').trim().toLowerCase();
+  if (st === 'confirmado') return false;
+  if (st !== '') return false;
+  return rowIsMensalidadePendenteLegacy(row);
+}
+
+/** Aba Pagas: coluna status OU legado (competência / entrada). */
+function mensalidadeRowIsPagaForTabs(row: MensalidadeZeladorRow): boolean {
+  if (mensalidadeStatusIsPending(row.status)) return false;
+  if (mensalidadeStatusIsPaid(row.status)) return true;
+  const st = String(row.status ?? '').trim().toLowerCase();
+  if (st === 'confirmado') return true;
+  if (st !== '') return false;
+  return rowIsMensalidadePagaLegacy(row);
 }
 
 interface Transaction {
@@ -178,7 +267,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
     }
   }, [userRole, userId, isAxePlan, hasCaixinhaAccess, tenantId]);
 
-  /** Pix + lista de filhos (modal de lançamento / configs). Mensalidades pendentes vêm da API `financeiro.status = pendente`. */
+  /** Pix + lista de filhos (modal de lançamento / configs). Mensalidades pendentes vêm da API (status pendente ou legado com "(vencimento" na descrição). */
   async function fetchMensalidadesGrid() {
     let dia = parseInt(pixConfig.dia_vencimento, 10) || 10;
     let valorPadrao = pixConfig.valor_mensalidade || '89.90';
@@ -213,20 +302,23 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
     }
   }
 
-  const refreshMensalidades = useCallback(async () => {
+  const refreshMensalidades = useCallback(async (opts?: { skipSync?: boolean }) => {
     if (!tenantId) return;
     setMensalidadesLoading(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) return;
-      await fetch('/api/v1/financial/mensalidades/sync-pendentes', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ tenant_id: tenantId }),
-      });
+      const skipSync = opts?.skipSync === true;
+      if (!skipSync) {
+        await fetch('/api/v1/financial/mensalidades/sync-pendentes', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ tenant_id: tenantId }),
+        });
+      }
       const headers = { Authorization: `Bearer ${session.access_token}` };
       const base = `/api/v1/financial/mensalidades?tenantId=${encodeURIComponent(tenantId)}`;
       const [rPen, rPag] = await Promise.all([
@@ -237,7 +329,7 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
       const jPag = await rPag.json().catch(() => ({}));
       if (!rPen.ok) throw new Error(String(jPen.error || 'Falha ao carregar pendentes'));
       if (!rPag.ok) throw new Error(String(jPag.error || 'Falha ao carregar pagas'));
-      const pen = (jPen.data || []) as MensalidadeZeladorRow[];
+      const pen = dedupeMensalidadesPorFilhoMesClient((jPen.data || []) as MensalidadeZeladorRow[]);
       const pag = (jPag.data || []) as MensalidadeZeladorRow[];
       const byId = new Map<string, MensalidadeZeladorRow>();
       for (const r of pen) byId.set(r.id, r);
@@ -252,11 +344,11 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
   }, [tenantId]);
 
   const mensalidadesPendentes = useMemo(
-    () => mensalidades.filter((r) => mensalidadeStatusIsPending(r.status)),
+    () => mensalidades.filter((r) => mensalidadeRowIsPendenteForTabs(r)),
     [mensalidades]
   );
   const mensalidadesPagas = useMemo(
-    () => mensalidades.filter((r) => mensalidadeStatusIsPaid(r.status)),
+    () => mensalidades.filter((r) => mensalidadeRowIsPagaForTabs(r)),
     [mensalidades]
   );
 
@@ -265,6 +357,47 @@ export default function Financial({ userRole, userId, tenantData, isAdminGlobal,
     if (activeView !== 'mensalidades') return;
     void refreshMensalidades();
   }, [activeView, tenantId, isAdmin, isAxePlan, refreshMensalidades]);
+
+  useEffect(() => {
+    if (!isAdmin || isAxePlan || !tenantId) return;
+    if (activeView !== 'mensalidades') return;
+    const onWindowFocus = () => {
+      void refreshMensalidades({ skipSync: true });
+    };
+    window.addEventListener('focus', onWindowFocus);
+    return () => window.removeEventListener('focus', onWindowFocus);
+  }, [activeView, tenantId, isAdmin, isAxePlan, refreshMensalidades]);
+
+  useEffect(() => {
+    if (!isAdmin || isAxePlan || !tenantId) return;
+    if (activeView !== 'mensalidades') return;
+
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    const subscribeTimer = window.setTimeout(() => {
+      channel = supabase
+        .channel(`mensalidades_financeiro_${tenantId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'financeiro',
+            filter: `tenant_id=eq.${tenantId}`,
+          },
+          () => {
+            void refreshMensalidades({ skipSync: true });
+            void mutateTransactions();
+            window.dispatchEvent(new Event(FINANCE_UPDATED_EVENT));
+          }
+        )
+        .subscribe();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(subscribeTimer);
+      if (channel) void supabase.removeChannel(channel);
+    };
+  }, [activeView, tenantId, isAdmin, isAxePlan, refreshMensalidades, mutateTransactions]);
 
   async function handleSavePixConfig(e: React.FormEvent) {
     e.preventDefault();

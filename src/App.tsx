@@ -28,7 +28,7 @@ import { hasPlanAccess, isLifetimePlan } from './constants/plans';
 import Paywall from './components/Paywall';
 import Subscription from './views/Subscription';
 import { useWebPush } from './hooks/useWebPush';
-import { SYSTEM_VERSION } from './config/version';
+import { SYSTEM_VERSION as BASE_SYSTEM_VERSION } from './config/version';
 import {
   clearCachedTenantIdForUser,
   peekCachedTenantId,
@@ -53,6 +53,9 @@ let isSessionReadyGlobal = false;
 export function getIsSessionReady() {
   return isSessionReadyGlobal;
 }
+
+// Bump local a cada rodada com mudanças para forçar logout/reload de validação.
+const SYSTEM_VERSION = `${BASE_SYSTEM_VERSION}-rtm12`;
 
 function readTenantAnchorFromStorage() {
   try {
@@ -285,7 +288,8 @@ export default function App() {
   }, [blockingSpinnerActive]);
 
   useEffect(() => {
-    document.body.style.overscrollBehaviorY = 'contain';
+    document.documentElement.style.overscrollBehavior = 'none';
+    document.body.style.overscrollBehavior = 'none';
   }, []);
 
   useEffect(() => {

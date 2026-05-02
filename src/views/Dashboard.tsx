@@ -177,6 +177,7 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
   const [transactions, setTransactions] = useState<any[]>([]);
   const [childrenData, setChildrenData] = useState<any[]>([]);
   const [historyData, setHistoryData] = useState<any[]>([]);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
 
   const dashboardCalendar = useMemo(() => {
     const anchor = new Date();
@@ -293,6 +294,32 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
     return () => window.removeEventListener('axecloud:finance-updated', onFinanceUpdated);
   }, [mutate]);
 
+  useEffect(() => {
+    if (!tenantId) return;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    const subscribeTimer = window.setTimeout(() => {
+      channel = supabase
+        .channel(`dashboard_finance_${tenantId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'financeiro',
+            filter: `tenant_id=eq.${tenantId}`,
+          },
+          () => {
+            void mutate();
+          }
+        )
+        .subscribe();
+    }, 0);
+    return () => {
+      window.clearTimeout(subscribeTimer);
+      if (channel) void supabase.removeChannel(channel);
+    };
+  }, [tenantId, mutate]);
+
   const loading = Boolean(dashboardSwrKey && isLoading && !dashboardBundle);
 
   useEffect(() => {
@@ -334,6 +361,15 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
       ? 'O terreiro pulsa com energia. Veja o resumo.'
       : 'A força dos Orixás guia esta noite.';
 
+  const handleManualRefresh = async () => {
+    setIsManualRefreshing(true);
+    try {
+      await mutate();
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-transparent text-white p-6 lg:p-10 font-sans selection:bg-[#D4AF37]/30">
       
@@ -343,30 +379,35 @@ export default function Dashboard({ setActiveTab, user, userRole = 'admin', tena
           <p className="text-xs font-black uppercase tracking-[0.25em] text-[#D4AF37] mb-1">{greetingEmoji} {greeting}, {terreiroNome.split(' ')[0]}</p>
           <h1 className="text-2xl font-bold tracking-tight text-white leading-tight">Axé em Movimento</h1>
           <p className="text-[11px] text-gray-500 mt-1 font-medium">{greetingSubtitle}</p>
+        </div>
+        {/* Atualizar junto ao sino — lg+; no mobile só o ícone à direita do título (sino fica no header global) */}
+        <div className="flex shrink-0 items-center gap-2 lg:gap-3">
           <button
             type="button"
-            onClick={() => void mutate()}
-            className="mt-3 inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
+            onClick={() => void handleManualRefresh()}
+            disabled={isManualRefreshing}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5 text-base transition-colors hover:bg-white/10 disabled:opacity-60 disabled:cursor-not-allowed lg:h-10 lg:w-10"
+            title="Atualizar dados"
+            aria-label="Atualizar dados da dashboard"
           >
-            Atualizar dados
+            <span aria-hidden className={isManualRefreshing ? 'inline-block animate-spin' : ''}>🔄</span>
           </button>
-        </div>
-        {/* Avatar + Sino — lg+ apenas: evita dois painéis + dois canais Realtime entre sm e lg (header mobile ainda visível) */}
-        <div className="hidden lg:flex items-center gap-3 shrink-0">
-          <NotificationPanel tenantData={tenantData} systemVersion={systemVersion} userRole={userRole} userId={user?.id} />
-          <div className="flex items-center gap-3 bg-[#121212]/50 p-1 pr-4 rounded-full border border-white/5 cursor-pointer hover:bg-[#1a1a1a] transition-all">
-            <div className="w-10 h-10 rounded-full overflow-hidden border border-white/10 bg-primary/20 flex items-center justify-center text-background font-black text-sm">
-              {tenantData?.foto_url ? (
-                <img src={tenantData.foto_url} alt={terreiroNome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-              ) : (
-                terreiroNome.charAt(0).toUpperCase()
-              )}
-            </div>
-            <div className="text-left min-w-0 max-w-[200px]">
-              <p className="text-xs font-bold text-white leading-none truncate">{terreiroNome}</p>
-              {headerRoleLine && (
-                <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-widest leading-none truncate">{headerRoleLine}</p>
-              )}
+          <div className="hidden lg:flex items-center gap-3">
+            <NotificationPanel tenantData={tenantData} systemVersion={systemVersion} userRole={userRole} userId={user?.id} />
+            <div className="flex items-center gap-3 bg-[#121212]/50 p-1 pr-4 rounded-full border border-white/5 cursor-pointer hover:bg-[#1a1a1a] transition-all">
+              <div className="w-10 h-10 rounded-full overflow-hidden border border-white/10 bg-primary/20 flex items-center justify-center text-background font-black text-sm">
+                {tenantData?.foto_url ? (
+                  <img src={tenantData.foto_url} alt={terreiroNome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                ) : (
+                  terreiroNome.charAt(0).toUpperCase()
+                )}
+              </div>
+              <div className="text-left min-w-0 max-w-[200px]">
+                <p className="text-xs font-bold text-white leading-none truncate">{terreiroNome}</p>
+                {headerRoleLine && (
+                  <p className="text-[10px] text-gray-500 mt-1 uppercase tracking-widest leading-none truncate">{headerRoleLine}</p>
+                )}
+              </div>
             </div>
           </div>
         </div>
